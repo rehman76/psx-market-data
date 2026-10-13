@@ -50,7 +50,7 @@ def main():
         status['database_rows'] = count
         if status['import_failures']:
             raise SystemExit('Import errors; refusing to publish')
-        stocks = [build(conn, s.upper(), 250) for s in args.symbols]
+        stocks = [build(conn, s.upper(), 300) for s in args.symbols]
     publish = Path(args.publish)
     publish.mkdir(parents=True, exist_ok=True)
     status['latest_trade_dates'] = {s['symbol']: s['latest_trade_date'] for s in stocks}
