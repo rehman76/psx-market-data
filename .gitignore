@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+closing_files/
+state/
+publish/
+*.sqlite
+.env

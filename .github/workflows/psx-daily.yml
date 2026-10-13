@@ -1,0 +1,109 @@
+name: PSX closing data pipeline
+on:
+  schedule:
+    # 16:00, 16:10, 16:30 PKT for closing-file retries; 08:50 PKT for premarket.
+    # GitHub schedule triggers can be delayed and do not guarantee publication before 16:15.
+    - cron: '0,10,30 11 * * 1-5'
+    - cron: '50 3 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      download_url:
+        description: 'Optional: VERIFIED and authorized direct PSX closing file HTTPS URL'
+        required: false
+        type: string
+      bootstrap_sample:
+        description: 'One-time seed using the uploaded October 12 sample (only if permitted)'
+        required: false
+        default: false
+        type: boolean
+      publish_pages:
+        description: 'Publish to public GitHub Pages ONLY if PSX data redistribution is authorized'
+        required: false
+        default: false
+        type: boolean
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+concurrency:
+  group: psx-daily
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      can_publish: ${{ steps.flags.outputs.can_publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Restore persistent state branch if it exists
+        shell: bash
+        run: |
+          mkdir -p state closing_files
+          if git ls-remote --exit-code --heads origin psx-state >/dev/null 2>&1; then
+            git fetch --depth=1 origin psx-state
+            git show FETCH_HEAD:psx_ohlcv.sqlite > state/psx_ohlcv.sqlite || true
+          fi
+      - name: Optional one-time bootstrap from sample
+        if: inputs.bootstrap_sample == true
+        run: cp sample/20261012_new.lis.Z closing_files/20261012_new.lis.Z
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Import, calculate and export
+        env:
+          AUTHORIZED_CLOSING_URL: ${{ inputs.download_url || vars.PSX_AUTHORIZED_CLOSING_URL }}
+        run: |
+          python scripts/run_pipeline.py --input closing_files --db state/psx_ohlcv.sqlite --publish publish --symbols MCB SYS KOHE
+      - name: Upload feed as workflow artifact (private to repository permissions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: psx-analysis-feed
+          path: |
+            publish/psx_analysis_feed.json
+            publish/status.json
+          retention-days: 30
+      - name: Persist SQLite on psx-state branch
+        shell: bash
+        run: |
+          cp state/psx_ohlcv.sqlite "$RUNNER_TEMP/psx_ohlcv.sqlite"
+          git fetch origin psx-state:refs/remotes/origin/psx-state 2>/dev/null || true
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git show-ref --verify --quiet refs/remotes/origin/psx-state; then
+            git worktree add --detach "$RUNNER_TEMP/psx-state" refs/remotes/origin/psx-state
+          else
+            git worktree add --detach "$RUNNER_TEMP/psx-state"
+            (cd "$RUNNER_TEMP/psx-state" && git checkout --orphan psx-state && git rm -rf . >/dev/null 2>&1 || true)
+          fi
+          cp "$RUNNER_TEMP/psx_ohlcv.sqlite" "$RUNNER_TEMP/psx-state/psx_ohlcv.sqlite"
+          (cd "$RUNNER_TEMP/psx-state" && git add psx_ohlcv.sqlite && if ! git diff --cached --quiet; then git commit -m 'Update PSX OHLCV state'; fi && git push origin HEAD:psx-state)
+      - name: Decide public publishing
+        id: flags
+        env:
+          INPUT_PUBLISH: ${{ inputs.publish_pages }}
+          ALLOW_PUBLIC: ${{ vars.PSX_ALLOW_PUBLIC_PUBLISH }}
+        run: |
+          if [ "$INPUT_PUBLISH" = 'true' ] && [ "$ALLOW_PUBLIC" = 'true' ]; then
+            echo 'can_publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'can_publish=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Upload Pages artifact (only when authorized and enabled)
+        if: steps.flags.outputs.can_publish == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: publish
+  deploy:
+    needs: build
+    if: needs.build.outputs.can_publish == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
