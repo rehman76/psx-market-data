@@ -11,7 +11,11 @@ import math
 from pathlib import Path
 import sqlite3
 
-
+MARKET_CODES = {
+    "MCB": ("REG", "0807"),
+    "SYS": ("REG", "0828"),
+    "KOHE": ("REG", "0824"),
+}
 def ema(values, n):
     if len(values) < n:
         return None
@@ -75,7 +79,72 @@ def round_or_none(value):
 
 
 def read_candles(conn, symbol, limit):
-    # Market code varies by symbol in the official sample (MCB=0807,
+    allowed = MARKET_CODES.get(symbol)
+
+    if not allowed:
+        return [], None, [
+            f"{symbol}: no verified market-code mapping configured"
+        ]
+
+    placeholders = ",".join("?" for _ in allowed)
+
+    rows = conn.execute(
+        f"""
+        SELECT trade_date, open, high, low, close,
+               volume, source_file, market_code
+        FROM ohlcv
+        WHERE symbol = ?
+          AND market_code IN ({placeholders})
+          AND open > 0
+          AND high > 0
+          AND low > 0
+          AND close > 0
+          AND volume >= 0
+        ORDER BY trade_date DESC
+        """,
+        (symbol, *allowed)
+    ).fetchall()
+
+    candles_by_date = {}
+
+    # Prefer the later-listed market code if both exist
+    # for the same date. Never aggregate their volumes.
+    priority = {code: i for i, code in enumerate(allowed)}
+
+    for row in rows:
+        date, op, hi, lo, cl, vol, source, code = row
+
+        if not (lo <= min(op, cl) <= max(op, cl) <= hi):
+            continue
+
+        existing = candles_by_date.get(date)
+
+        if existing is None or priority[code] > priority[existing["market_code"]]:
+            candles_by_date[date] = {
+                "date": date,
+                "open": op,
+                "high": hi,
+                "low": lo,
+                "close": cl,
+                "volume": vol,
+                "source_file": source,
+                "market_code": code,
+            }
+
+    candles = [
+        candles_by_date[d]
+        for d in sorted(candles_by_date)[-limit:]
+    ]
+
+    for candle in candles:
+        candle.pop("market_code")
+
+    warnings = [
+        f"{symbol}: combined market codes {list(allowed)}; "
+        "source equivalence requires verification"
+    ]
+
+    return candles, ",".join(allowed), warnings    # Market code varies by symbol in the official sample (MCB=0807,
     # SYS=0828, KOHE=0824). Select the most represented valid market code;
     # warn if a symbol has multiple codes that require manual reconciliation.
     codes = conn.execute('''SELECT market_code, COUNT(*) n FROM ohlcv
