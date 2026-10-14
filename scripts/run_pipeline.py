@@ -17,6 +17,7 @@ sys.path.insert(0, str(ROOT))
 from psx_collector import connect, import_paths, fetch_authorized
 from psx_analysis_feed import build
 from scripts.fetch_psxdata import collect_psxdata_conn
+from scripts.freshness_core import assess
 
 
 def main():
@@ -85,13 +86,28 @@ def main():
     status['latest_trade_dates'] = {s['symbol']: s['latest_trade_date'] for s in stocks}
     status['sessions'] = {s['symbol']: s['sessions'] for s in stocks}
     status['data_available'] = all(s['sessions'] > 0 for s in stocks)
-    status['new_download_missing'] = not status['download_succeeded']
+    status['new_download_missing'] = not status['download_succeeded']  # Legacy: official archive only.
+    # Freshness is independent of the optional direct PSX download.
+    with sqlite3.connect(f'file:{db.resolve()}?mode=ro', uri=True) as conn:
+        freshness = assess(conn, [s.upper() for s in args.symbols], min_sessions=50, max_business_lag=1)
+    status['data_freshness'] = freshness
+    psx_ok = bool(status['psxdata'].get('ok'))
+    status['sources'] = {
+        'official_psx': {'download_attempted': status['download_attempted'],
+                         'download_succeeded': status['download_succeeded'],
+                         'error': status.get('download_error')},
+        'psxdata': {'enabled': bool(status['psxdata'].get('enabled')),
+                    'ok': psx_ok, 'inserted_rows': status['psxdata'].get('totals', {}).get('inserted_rows', 0)}
+    }
+    status['pipeline_status'] = ('fresh' if freshness['fresh'] and status['data_available']
+                                 else 'stale_or_insufficient' if status['data_available'] else 'unavailable')
     # The feed intentionally does not assert that data is fresh merely because it was generated now.
     feed = {'schema_version': '1.1', 'generated_at_utc': status['run_at_utc'],
             'source_policy': 'Locally imported official PSX closing files plus psxdata backfill rows only where no existing same-symbol/date row exists; unadjusted; provenance in source_file',
             'collection_status': status, 'stocks': stocks}
     (publish / 'psx_analysis_feed.json').write_text(json.dumps(feed, indent=2, allow_nan=False), encoding='utf-8')
     (publish / 'status.json').write_text(json.dumps(status, indent=2), encoding='utf-8')
+    (publish / 'freshness.json').write_text(json.dumps(freshness, indent=2), encoding='utf-8')
     (publish / 'psxdata_status.json').write_text(json.dumps(status['psxdata'], indent=2), encoding='utf-8')
     print(json.dumps(status, indent=2))
     if not status['data_available']:
