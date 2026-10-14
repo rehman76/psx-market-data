@@ -1,177 +1,86 @@
 name: PSX closing data pipeline
-
 on:
   schedule:
-    # UTC: 11:00, 11:10, 11:30 = 16:00, 16:10, 16:30 PKT
-    # UTC: 03:50 = 08:50 PKT. GitHub scheduled runs can be delayed.
+    # 16:00, 16:10, 16:30 PKT for closing-file retries; 08:50 PKT for premarket.
+    # GitHub schedule triggers can be delayed and do not guarantee publication before 16:15.
     - cron: '0,10,30 11 * * 1-5'
     - cron: '50 3 * * 1-5'
   workflow_dispatch:
     inputs:
       download_url:
-        description: 'Optional VERIFIED and authorized direct PSX closing file HTTPS URL'
+        description: 'Optional: VERIFIED and authorized direct PSX closing file HTTPS URL'
         required: false
         type: string
       bootstrap_sample:
-        description: 'Seed from October 12 sample only if use is permitted'
+        description: 'One-time seed using the uploaded October 12 sample (only if permitted)'
         required: false
         default: false
         type: boolean
       publish_pages:
-        description: 'Publish publicly ONLY if PSX data redistribution is authorized'
+        description: 'Publish to public GitHub Pages ONLY if PSX data redistribution is authorized'
         required: false
         default: false
         type: boolean
-
 permissions:
   contents: write
   pages: write
   id-token: write
-
 concurrency:
   group: psx-daily
   cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
       can_publish: ${{ steps.flags.outputs.can_publish }}
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           persist-credentials: true
-
+      - name: Restore persistent state branch if it exists
+        shell: bash
+        run: |
+          mkdir -p state closing_files
+          if git ls-remote --exit-code --heads origin psx-state >/dev/null 2>&1; then
+            git fetch --depth=1 origin psx-state
+            git show FETCH_HEAD:psx_ohlcv.sqlite > state/psx_ohlcv.sqlite || true
+          fi
+      - name: Optional one-time bootstrap from sample
+        if: inputs.bootstrap_sample == true
+        run: cp sample/20261012_new.lis.Z closing_files/20261012_new.lis.Z
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Restore and verify persistent SQLite state
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p state closing_files publish
-          if git ls-remote --exit-code --heads origin psx-state >/dev/null 2>&1; then
-            git fetch --depth=1 origin psx-state
-            git show FETCH_HEAD:psx_ohlcv.sqlite > state/psx_ohlcv.sqlite
-            python - <<'PY'
-          import sqlite3
-          with sqlite3.connect('state/psx_ohlcv.sqlite') as con:
-              result = con.execute('PRAGMA integrity_check').fetchone()[0]
-              if result != 'ok':
-                  raise SystemExit(f'SQLite integrity failed: {result}')
-              count = con.execute('SELECT COUNT(*) FROM ohlcv').fetchone()[0]
-              if count <= 0:
-                  raise SystemExit('Restored database has no OHLCV records')
-              print(f'Restored {count} OHLCV rows')
-          PY
-          else
-            echo 'No psx-state branch found; starting with empty state.'
-          fi
-
-      - name: Optional one-time bootstrap from sample
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_sample == true }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f sample/20261012_new.lis.Z
-          cp sample/20261012_new.lis.Z closing_files/20261012_new.lis.Z
-
+      - name: Try dated PSX download (only when authorized)
+        if: vars.PSX_AUTOMATED_DOWNLOAD_AUTHORIZED == 'true'
+        run: python scripts/fetch_closing.py --directory closing_files --authorized
       - name: Import, calculate and export
-        shell: bash
         env:
           AUTHORIZED_CLOSING_URL: ${{ inputs.download_url || vars.PSX_AUTHORIZED_CLOSING_URL }}
         run: |
-          set -euo pipefail
-          python scripts/run_pipeline.py \
-            --input closing_files \
-            --db state/psx_ohlcv.sqlite \
-            --publish publish \
-            --symbols MCB SYS KOHE
-
-      - name: Generate corrected PSX analysis feed
-        shell: bash
+          python scripts/run_pipeline.py --input closing_files --db state/psx_ohlcv.sqlite --publish publish --symbols MCB SYS KOHE
+      - name: Check source freshness
+        id: freshness
+        continue-on-error: true
+        run: python scripts/check_freshness.py --db state/psx_ohlcv.sqlite --symbols MCB SYS KOHE --min-sessions 50 --max-business-lag 1
+      - name: Prevent stale feed publication
+        if: steps.freshness.outcome != 'success'
         run: |
-          set -euo pipefail
-          test -f psx_analysis_feed.py
-          python psx_analysis_feed.py \
-            --db state/psx_ohlcv.sqlite \
-            --out publish/psx_analysis_feed.json \
-            --symbols MCB SYS KOHE \
-            --history 250
-
-      - name: Validate feed, indicators and database
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import json
-          import sqlite3
-          from datetime import date, datetime
-          from pathlib import Path
-
-          db = Path('state/psx_ohlcv.sqlite')
-          feed = Path('publish/psx_analysis_feed.json')
-          status_file = Path('publish/status.json')
-          if not db.is_file() or not feed.is_file() or not status_file.is_file():
-              raise SystemExit('FAIL: Database, analysis feed, or status.json missing')
-
-          with sqlite3.connect(db) as con:
-              if con.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
-                  raise SystemExit('FAIL: SQLite integrity check')
-              count = con.execute('SELECT COUNT(*) FROM ohlcv').fetchone()[0]
-              print(f'Database rows: {count}')
-
-          data = json.loads(feed.read_text(encoding='utf-8'))
-          status = json.loads(status_file.read_text(encoding='utf-8'))
-          stocks = data.get('stocks', [])
-          expected = {'MCB', 'SYS', 'KOHE'}
-          found = [stock.get('symbol') for stock in stocks]
-          if len(found) != len(expected) or set(found) != expected:
-              raise SystemExit(f'FAIL: Expected {sorted(expected)}, got {found}')
-
-          today = date.today()
-          for stock in stocks:
-              symbol = stock['symbol']
-              sessions = stock.get('sessions', 0)
-              latest = stock.get('latest_trade_date')
-              indicators = stock.get('indicators') or {}
-              if sessions < 200:
-                  raise SystemExit(f'FAIL: {symbol} has only {sessions} sessions')
-              if not latest:
-                  raise SystemExit(f'FAIL: {symbol} missing latest trading date')
-              parsed = date.fromisoformat(latest)
-              if parsed > today:
-                  raise SystemExit(f'FAIL: {symbol} has future trading date {latest}')
-              for key in ('sma20', 'sma50', 'rsi14_wilder'):
-                  if indicators.get(key) is None:
-                      raise SystemExit(f'FAIL: {symbol} missing {key}')
-              print(f'{symbol}: {sessions} sessions; latest={latest}; warnings={stock.get("warnings", [])}')
-
-          print('Download attempted:', status.get('download_attempted'))
-          print('Download succeeded:', status.get('download_succeeded'))
-          print('New download missing:', status.get('new_download_missing'))
-          if status.get('new_download_missing'):
-              print('WARNING: No new downloaded file; this run is NOT proof of fresh PSX data')
-          print('PASS: Structural feed and database checks. Source equivalence and freshness remain separate checks.')
-          PY
-
-      - name: Upload analysis feed and status artifact
+          echo 'WARNING: market data is stale or insufficient; latest feed must not be treated as current.'
+          # Fail after uploading diagnostic artifacts; persistence still runs.
+      - name: Upload feed as workflow artifact (private to repository permissions)
         uses: actions/upload-artifact@v4
         with:
           name: psx-analysis-feed
           path: |
             publish/psx_analysis_feed.json
             publish/status.json
-          if-no-files-found: error
+            publish/freshness.json
           retention-days: 30
-
       - name: Persist SQLite on psx-state branch
         shell: bash
         run: |
-          set -euo pipefail
           cp state/psx_ohlcv.sqlite "$RUNNER_TEMP/psx_ohlcv.sqlite"
           git fetch origin psx-state:refs/remotes/origin/psx-state 2>/dev/null || true
           git config user.name 'github-actions[bot]'
@@ -180,44 +89,32 @@ jobs:
             git worktree add --detach "$RUNNER_TEMP/psx-state" refs/remotes/origin/psx-state
           else
             git worktree add --detach "$RUNNER_TEMP/psx-state"
-            (
-              cd "$RUNNER_TEMP/psx-state"
-              git checkout --orphan psx-state
-              git rm -rf . >/dev/null 2>&1 || true
-            )
+            (cd "$RUNNER_TEMP/psx-state" && git checkout --orphan psx-state && git rm -rf . >/dev/null 2>&1 || true)
           fi
           cp "$RUNNER_TEMP/psx_ohlcv.sqlite" "$RUNNER_TEMP/psx-state/psx_ohlcv.sqlite"
-          (
-            cd "$RUNNER_TEMP/psx-state"
-            git add psx_ohlcv.sqlite
-            if ! git diff --cached --quiet; then
-              git commit -m 'Update PSX OHLCV state'
-            fi
-            git push origin HEAD:psx-state
-          )
-
+          (cd "$RUNNER_TEMP/psx-state" && git add psx_ohlcv.sqlite && if ! git diff --cached --quiet; then git commit -m 'Update PSX OHLCV state'; fi && git push origin HEAD:psx-state)
       - name: Decide public publishing
         id: flags
-        shell: bash
         env:
           INPUT_PUBLISH: ${{ inputs.publish_pages }}
           ALLOW_PUBLIC: ${{ vars.PSX_ALLOW_PUBLIC_PUBLISH }}
         run: |
-          if [ "$INPUT_PUBLISH" = 'true' ] && [ "$ALLOW_PUBLIC" = 'true' ]; then
+          if [ "$INPUT_PUBLISH" = 'true' ] && [ "$ALLOW_PUBLIC" = 'true' ] && [ '${{ steps.freshness.outcome }}' = 'success' ]; then
             echo 'can_publish=true' >> "$GITHUB_OUTPUT"
           else
             echo 'can_publish=false' >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Upload Pages artifact (only if authorized)
-        if: ${{ steps.flags.outputs.can_publish == 'true' }}
+      - name: Upload Pages artifact (only when authorized and enabled)
+        if: steps.flags.outputs.can_publish == 'true'
         uses: actions/upload-pages-artifact@v3
         with:
           path: publish
-
+      - name: Mark stale market data as workflow failure
+        if: steps.freshness.outcome != 'success'
+        run: exit 1
   deploy:
     needs: build
-    if: ${{ needs.build.outputs.can_publish == 'true' }}
+    if: needs.build.outputs.can_publish == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
