@@ -63,18 +63,24 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Install psxdata dependency when authorized
+        if: vars.PSXDATA_AUTOMATED_USE_AUTHORIZED == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
       - name: Try dated PSX download (only when authorized)
         if: vars.PSX_AUTOMATED_DOWNLOAD_AUTHORIZED == 'true'
         run: python scripts/fetch_closing.py --directory closing_files --authorized
 
-      # NEW: Diagnose the PSX server response from GitHub Actions.
-      # This step is diagnostic only and does not import the downloaded file.
+      # Diagnostic only; the importer still uses closing_files and explicit authorization.
       - name: Diagnose PSX download
         shell: bash
         run: |
           set -euo pipefail
 
-          URL="https://dps.psx.com.pk/download/mkt_summary/2026-10-14.Z"
+          DAY="$(TZ=Asia/Karachi date +%F)"
+          URL="https://dps.psx.com.pk/download/mkt_summary/${DAY}.Z"
 
           HTTP_CODE=$(curl -sSL \
             --max-time 30 \
@@ -101,12 +107,27 @@ jobs:
       - name: Import, calculate and export
         env:
           AUTHORIZED_CLOSING_URL: ${{ inputs.download_url || vars.PSX_AUTHORIZED_CLOSING_URL }}
+          PSXDATA_AUTOMATED_USE_AUTHORIZED: ${{ vars.PSXDATA_AUTOMATED_USE_AUTHORIZED }}
+        shell: bash
         run: |
+          PSXDATA_ARGS=()
+          if [ "${PSXDATA_AUTOMATED_USE_AUTHORIZED:-}" = 'true' ]; then
+            PSXDATA_ARGS=(
+              --psxdata
+              --psxdata-mode backfill
+              --psxdata-backfill-days 430
+              --psxdata-min-sessions 250
+            )
+          else
+            echo 'psxdata collection disabled; set PSXDATA_AUTOMATED_USE_AUTHORIZED=true only after verifying automated-use permission.'
+          fi
+
           python scripts/run_pipeline.py \
             --input closing_files \
             --db state/psx_ohlcv.sqlite \
             --publish publish \
-            --symbols MCB SYS KOHE
+            --symbols MCB SYS KOHE \
+            "${PSXDATA_ARGS[@]}"
 
       - name: Check source freshness
         id: freshness
@@ -115,7 +136,7 @@ jobs:
           python scripts/check_freshness.py \
             --db state/psx_ohlcv.sqlite \
             --symbols MCB SYS KOHE \
-            --min-sessions 50 \
+            --min-sessions 250 \
             --max-business-lag 1
 
       - name: Prevent stale feed publication
@@ -131,6 +152,7 @@ jobs:
           path: |
             publish/psx_analysis_feed.json
             publish/status.json
+            publish/psxdata_status.json
             publish/freshness.json
           retention-days: 30
 

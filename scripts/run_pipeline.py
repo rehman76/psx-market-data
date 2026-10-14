@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from psx_collector import connect, import_paths, fetch_authorized
 from psx_analysis_feed import build
+from scripts.fetch_psxdata import collect_psxdata_conn
 
 
 def main():
@@ -25,10 +26,25 @@ def main():
     ap.add_argument('--publish', default='publish')
     ap.add_argument('--symbols', nargs='+', default=['MCB', 'SYS', 'KOHE'])
     ap.add_argument('--download-url', default=os.getenv('AUTHORIZED_CLOSING_URL', ''))
+    ap.add_argument('--psxdata', action='store_true',
+                    help='Enable psxdata==1.2.0 historical backfill/incremental collection')
+    ap.add_argument('--psxdata-mode', choices=('backfill', 'incremental'), default='backfill')
+    ap.add_argument('--psxdata-start', help='YYYY-MM-DD; default depends on psxdata mode')
+    ap.add_argument('--psxdata-end', help='YYYY-MM-DD; defaults to today')
+    ap.add_argument('--psxdata-backfill-days', type=int, default=430)
+    ap.add_argument('--psxdata-overlap-days', type=int, default=10)
+    ap.add_argument('--psxdata-min-sessions', type=int, default=250)
+    ap.add_argument('--psxdata-no-cache', action='store_true')
     args = ap.parse_args()
     source = Path(args.input)
     source.mkdir(parents=True, exist_ok=True)
-    status = {'run_at_utc': datetime.now(timezone.utc).isoformat(), 'download_attempted': bool(args.download_url), 'download_succeeded': False, 'import_failures': 0}
+    status = {
+        'run_at_utc': datetime.now(timezone.utc).isoformat(),
+        'download_attempted': bool(args.download_url),
+        'download_succeeded': False,
+        'import_failures': 0,
+        'psxdata': {'enabled': False},
+    }
     if args.download_url:
         url = args.download_url.strip()
         parsed = urlparse(url)
@@ -46,6 +62,19 @@ def main():
     db.parent.mkdir(parents=True, exist_ok=True)
     with connect(db) as conn:
         status['import_failures'] = import_paths(conn, [str(source)])
+        if args.psxdata:
+            status['psxdata'] = collect_psxdata_conn(
+                conn,
+                symbols=[s.upper() for s in args.symbols],
+                mode=args.psxdata_mode,
+                start=args.psxdata_start,
+                end=args.psxdata_end,
+                backfill_days=args.psxdata_backfill_days,
+                overlap_days=args.psxdata_overlap_days,
+                min_provider_sessions=args.psxdata_min_sessions,
+                cache=not args.psxdata_no_cache,
+                apply=True,
+            )
         count = conn.execute('SELECT COUNT(*) FROM ohlcv').fetchone()[0]
         status['database_rows'] = count
         if status['import_failures']:
@@ -59,10 +88,11 @@ def main():
     status['new_download_missing'] = not status['download_succeeded']
     # The feed intentionally does not assert that data is fresh merely because it was generated now.
     feed = {'schema_version': '1.1', 'generated_at_utc': status['run_at_utc'],
-            'source_policy': 'Locally imported official PSX closing files; unadjusted; provenance in source_file',
+            'source_policy': 'Locally imported official PSX closing files plus psxdata backfill rows only where no existing same-symbol/date row exists; unadjusted; provenance in source_file',
             'collection_status': status, 'stocks': stocks}
     (publish / 'psx_analysis_feed.json').write_text(json.dumps(feed, indent=2, allow_nan=False), encoding='utf-8')
     (publish / 'status.json').write_text(json.dumps(status, indent=2), encoding='utf-8')
+    (publish / 'psxdata_status.json').write_text(json.dumps(status['psxdata'], indent=2), encoding='utf-8')
     print(json.dumps(status, indent=2))
     if not status['data_available']:
         raise SystemExit('No data for one or more tracked stocks; no usable feed')

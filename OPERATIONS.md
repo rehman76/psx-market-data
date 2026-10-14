@@ -14,11 +14,16 @@
 5. Inspect logs for `download_attempted: true`, `download_succeeded: true`, new trade dates, and import errors.
 6. Verify a new `psx-state` commit and that repeated runs do not duplicate records.
 
+## Optional psxdata backfill
+The workflow can use `psxdata==1.2.0` to backfill and incrementally update MCB, SYS and KOHE, but only after automated use is verified. Keep `PSXDATA_AUTOMATED_USE_AUTHORIZED` unset until permission is confirmed. Once set to `true`, Actions installs `requirements.txt`, runs `scripts/run_pipeline.py --psxdata`, writes `publish/psxdata_status.json`, and still preserves the official closing-file importer.
+
+See `docs/psxdata-source-policy.md` for package provenance, permission boundaries and merge policy. The collector inserts psxdata rows only for missing symbol/date pairs, compares overlaps with official closing-file rows, and reports discrepancies without overwriting existing records.
+
 ## Check historical coverage
 From a checkout of the state branch or with the SQLite file copied to `state/psx_ohlcv.sqlite`:
 
 ```bash
-python scripts/verify_pipeline.py --db state/psx_ohlcv.sqlite --symbols MCB SYS KOHE --min-sessions 50
+python scripts/verify_pipeline.py --db state/psx_ohlcv.sqlite --symbols MCB SYS KOHE --min-sessions 250
 ```
 
 An exit code of 1 indicates stale/insufficient coverage, not necessarily a broken workflow. With one sample day this check should fail intentionally.

@@ -169,6 +169,7 @@ def build(conn, symbol, limit):
     closes = [r['close'] for r in candles]
     vols = [r['volume'] for r in candles]
     last = candles[-1] if candles else None
+    uses_psxdata = any(str(r.get('source_file', '')).startswith('psxdata:') for r in candles)
     volume_avg = sum(vols[-20:]) / 20 if len(vols) >= 20 else None
     indicators = {
         'sma20': round_or_none(sum(closes[-20:]) / 20) if len(closes) >= 20 else None,
@@ -180,7 +181,8 @@ def build(conn, symbol, limit):
         'relative_volume': round_or_none(vols[-1] / volume_avg) if volume_avg else None,
     }
     return {
-        'symbol': symbol, 'market_code': market_code, 'source': 'PSX closing files imported locally',
+        'symbol': symbol, 'market_code': market_code,
+        'source': 'PSX closing files imported locally; psxdata used for missing sessions' if uses_psxdata else 'PSX closing files imported locally',
         'latest_trade_date': last['date'] if last else None,
         'earliest_trade_date': candles[0]['date'] if candles else None,
         'sessions': len(candles), 'latest_ohlcv': last,
