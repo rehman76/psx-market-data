@@ -71,38 +71,8 @@ jobs:
 
       - name: Try dated PSX download (only when authorized)
         if: vars.PSX_AUTOMATED_DOWNLOAD_AUTHORIZED == 'true'
+        continue-on-error: true
         run: python scripts/fetch_closing.py --directory closing_files --authorized
-
-      # Diagnostic only; the importer still uses closing_files and explicit authorization.
-      - name: Diagnose PSX download
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DAY="$(TZ=Asia/Karachi date +%F)"
-          URL="https://dps.psx.com.pk/download/mkt_summary/${DAY}.Z"
-
-          HTTP_CODE=$(curl -sSL \
-            --max-time 30 \
-            -o /tmp/psx_response.bin \
-            -D /tmp/psx_headers.txt \
-            -w '%{http_code}' \
-            "$URL") || {
-              echo "PSX diagnostic request failed."
-              exit 0
-            }
-
-          echo "HTTP status: $HTTP_CODE"
-
-          echo "Response type:"
-          file /tmp/psx_response.bin
-
-          echo "Response size:"
-          wc -c /tmp/psx_response.bin
-
-          echo "Relevant headers:"
-          grep -iE 'content-type|content-length|content-disposition' \
-            /tmp/psx_headers.txt || true
 
       - name: Import, calculate and export
         env:
@@ -134,6 +104,7 @@ jobs:
         continue-on-error: true
         run: |
           python scripts/check_freshness.py \
+            --publish publish \
             --db state/psx_ohlcv.sqlite \
             --symbols MCB SYS KOHE \
             --min-sessions 250 \
@@ -162,6 +133,22 @@ jobs:
           cp state/psx_ohlcv.sqlite "$RUNNER_TEMP/psx_ohlcv.sqlite"
 
           git fetch origin psx-state:refs/remotes/origin/psx-state 2>/dev/null || true
+          # Refuse to overwrite a remote DB that gained a newer session while this job ran.
+          if git show-ref --verify --quiet refs/remotes/origin/psx-state; then
+            git show refs/remotes/origin/psx-state:psx_ohlcv.sqlite > "$RUNNER_TEMP/remote_state.sqlite" || true
+            if [ -s "$RUNNER_TEMP/remote_state.sqlite" ]; then
+              python - "$RUNNER_TEMP/remote_state.sqlite" "$RUNNER_TEMP/psx_ohlcv.sqlite" <<'PYCODE'
+          import sqlite3, sys
+          with sqlite3.connect(sys.argv[1]) as remote, sqlite3.connect(sys.argv[2]) as local:
+              for symbol in ('MCB','SYS','KOHE'):
+                  query = 'SELECT MAX(trade_date) FROM ohlcv WHERE symbol=?'
+                  remote_latest = remote.execute(query,(symbol,)).fetchone()[0] or ''
+                  local_latest = local.execute(query,(symbol,)).fetchone()[0] or ''
+                  if remote_latest > local_latest:
+                      raise SystemExit(f'Remote state is newer for {symbol}: {remote_latest} > {local_latest}')
+          PYCODE
+            fi
+          fi
 
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
