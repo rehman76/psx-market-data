@@ -172,13 +172,15 @@ def inspect_closing_payload(data):
                     if member.file_size > 15 * 1024 * 1024:
                         raise OfficialDownloadError('CLOSING_MEMBER_TOO_LARGE')
                     rows, rejected = parse_lines(archive.read(member), member.filename)
-                    if not rows or rejected:
+                    # Official files can contain a small number of malformed
+                    # instrument records; reject pages masquerading as data.
+                    if not rows or len(rejected) > max(20, len(rows) // 10):
                         raise OfficialDownloadError('INVALID_CLOSING_ROWS')
         except (zipfile.BadZipFile, RuntimeError):
             raise OfficialDownloadError('INVALID_CLOSING_ZIP') from None
         return 'ZIP_LIS'
     rows, rejected = parse_lines(data, 'downloaded.lis')
-    if not rows or rejected:
+    if not rows or len(rejected) > max(20, len(rows) // 10):
         raise OfficialDownloadError('INVALID_CLOSING_ROWS')
     return 'RAW_LIS'
 
