@@ -17,7 +17,7 @@ sys.path.insert(0, str(ROOT))
 from psx_collector import connect, import_paths, fetch_authorized
 from psx_analysis_feed import build
 from scripts.fetch_psxdata import collect_psxdata_conn
-from scripts.freshness_core import assess
+from scripts.freshness_core import assess, expected_weekday
 
 
 def main():
@@ -80,9 +80,11 @@ def main():
         status['database_rows'] = count
         if status['import_failures']:
             raise SystemExit('Import errors; refusing to publish')
-        stocks = [build(conn, s.upper(), 300) for s in args.symbols]
+        completed_cutoff = expected_weekday().isoformat()
+        stocks = [build(conn, s.upper(), 300, completed_cutoff) for s in args.symbols]
     publish = Path(args.publish)
     publish.mkdir(parents=True, exist_ok=True)
+    status['completed_session_cutoff'] = completed_cutoff
     status['latest_trade_dates'] = {s['symbol']: s['latest_trade_date'] for s in stocks}
     status['sessions'] = {s['symbol']: s['sessions'] for s in stocks}
     status['data_available'] = all(s['sessions'] > 0 for s in stocks)
