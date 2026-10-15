@@ -33,23 +33,36 @@ def evaluate(stock, cutoff):
             low<=price<=high and low<high)
     signal='INSUFFICIENT_DATA'
     rationale=[]
+    checks={}
     if valid:
-        # A watch-level BUY candidate means price is trending constructively and
-        # some participation is present; it is not an executed breakout.
-        if price>sma20 and sma20>sma50 and 50<=rsi<=70 and volume>=1.0:
+        checks={
+            'price_above_ma20':price>sma20,
+            'ma20_above_ma50':sma20>sma50,
+            'rsi_50_to_70':50<=rsi<=70,
+            'relative_volume_at_least_1':volume>=1.0,
+        }
+        passes=sum(checks.values())
+        if passes==4:
             signal='PROVISIONAL_BUY_CANDIDATE'
-            rationale=['Research close above MA20','MA20 above MA50',
-                       'RSI14 between 50 and 70','Relative volume >= 1.0']
+        elif passes==3:
+            signal='EARLY_BUY_WATCH'
         else:
             signal='WAIT_FOR_TECHNICAL_CONFIRMATION'
-            if price<=sma20:rationale.append('Research close not above MA20')
-            if sma20<=sma50:rationale.append('MA20 not above MA50')
-            if rsi<50 or rsi>70:rationale.append('RSI outside 50-70 constructive range')
-            if volume<1:rationale.append('Below-average session volume')
+        messages={
+            'price_above_ma20':'Research close above MA20',
+            'ma20_above_ma50':'MA20 above MA50',
+            'rsi_50_to_70':'RSI14 between 50 and 70',
+            'relative_volume_at_least_1':'Relative volume >= 1.0',
+        }
+        rationale=[('PASS: ' if passed else 'FAIL: ')+messages[key]
+                   for key,passed in checks.items()]
     else:
         issues.append('MISSING_OR_STALE_TECHNICAL_OBSERVATION')
     return {
       'symbol':symbol, 'signal':signal,
+      'screening_checks':checks,
+      'screening_passed':sum(checks.values()) if valid else None,
+      'screening_total':4 if valid else None,
       'research_only':True,'trade_eligible':False,'user_approval_required':True,
       'observed_session':session,'research_close_pkr':price,
       'buy_trigger': {'condition':'FUTURE_CLOSE_ABOVE_PRIOR_20_SESSION_HIGH_WITH_VOLUME_CONFIRMATION',
@@ -86,12 +99,13 @@ def build(agenda):
     return {
        'schema_version':'1.0','generated_at_utc':datetime.now(timezone.utc).isoformat(),
        'completed_session_cutoff':cutoff,'provenance':'CURATED_RESEARCH_FEED_NOT_AUTHENTICATED_DPS',
-       'purpose':'Human-reviewed provisional technical buy-candidate screening',
+       'purpose':'Human-reviewed early-watch and provisional technical buy-candidate screening',
        'not_investment_advice':True,'automated_trading':False,
        'signals':rows,
        'summary':{
            'stocks_evaluated':len(rows),
            'provisional_buy_candidates':sum(r['signal']=='PROVISIONAL_BUY_CANDIDATE' for r in rows),
+           'early_buy_watch':sum(r['signal']=='EARLY_BUY_WATCH' for r in rows),
            'technical_wait':sum(r['signal']=='WAIT_FOR_TECHNICAL_CONFIRMATION' for r in rows),
            'insufficient_data':sum(r['signal']=='INSUFFICIENT_DATA' for r in rows),
            'officially_verified_buy_orders':0,'approved_trade_orders':0,
