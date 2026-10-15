@@ -334,6 +334,22 @@ jobs:
             --agenda-out publish/research_agenda.json \
             --register-out publish/recommendation_register.json
 
+      - name: Test provisional BUY candidate classification
+        run: python -m unittest discover -s tests -p 'test_provisional_buy_signals.py' -v
+
+      - name: Generate human-review BUY candidate signals
+        run: |
+          python scripts/provisional_buy_signals.py \
+            --agenda publish/research_agenda.json \
+            --out publish/provisional_buy_signals.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          x=json.loads(Path('publish/provisional_buy_signals.json').read_text())
+          assert all(not p['trade_eligible'] and p['approved_shares']==0 for p in x['signals'])
+          assert x['summary']['officially_verified_buy_orders']==0
+          PY
+
       - name: Check source freshness
         id: freshness
         continue-on-error: true
@@ -359,6 +375,7 @@ jobs:
             publish/discovery_watchlist.json
             publish/research_agenda.json
             publish/price_reconciliation.json
+            publish/provisional_buy_signals.json
             publish/recommendation_register.json
             publish/research_validation.json
             publish/source_verification.json
