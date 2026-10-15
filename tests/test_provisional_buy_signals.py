@@ -20,6 +20,8 @@ class TestProvisionalBuySignals(unittest.TestCase):
     def test_provisional_signal_remains_unapproved(self):
         x=build(agenda())
         self.assertEqual(x['summary']['provisional_buy_candidates'],1)
+        self.assertEqual(x['summary']['early_buy_watch'],0)
+        self.assertEqual(x['signals'][0]['screening_passed'],4)
         r=x['signals'][0]
         self.assertEqual(r['signal'],'PROVISIONAL_BUY_CANDIDATE')
         self.assertFalse(r['trade_eligible'])
@@ -30,6 +32,29 @@ class TestProvisionalBuySignals(unittest.TestCase):
         self.assertFalse(r['buy_trigger']['triggered'])
         self.assertIsNone(r['invalidation']['actual_stop_order_price_pkr'])
         self.assertIn('OFFICIAL_PRICE_NOT_INDEPENDENTLY_VERIFIED',r['missing_requirements'])
+
+    def test_early_buy_watch_three_of_four(self):
+        a=agenda()
+        a['stocks'][0]['technical']['sma50']=105.0
+        x=build(a)
+        r=x['signals'][0]
+        self.assertEqual(r['signal'],'EARLY_BUY_WATCH')
+        self.assertEqual(r['screening_passed'],3)
+        self.assertFalse(r['screening_checks']['ma20_above_ma50'])
+        self.assertFalse(r['trade_eligible'])
+        self.assertEqual(r['approved_shares'],0)
+        self.assertFalse(r['buy_trigger']['triggered'])
+        self.assertIsNone(r['entry_price_pkr'])
+        self.assertIsNone(r['target_price_pkr'])
+        self.assertIsNone(r['invalidation']['actual_stop_order_price_pkr'])
+
+    def test_early_low_volume(self):
+        a=agenda()
+        a['stocks'][0]['technical']['relative_volume']=0.35
+        r=build(a)['signals'][0]
+        self.assertEqual(r['signal'],'EARLY_BUY_WATCH')
+        self.assertEqual(r['screening_passed'],3)
+        self.assertFalse(r['screening_checks']['relative_volume_at_least_1'])
 
     def test_wait_and_missing_data(self):
         x=build(agenda())
@@ -47,6 +72,8 @@ class TestProvisionalBuySignals(unittest.TestCase):
         self.assertEqual(build(a)['signals'][0]['signal'],'INSUFFICIENT_DATA')
         a=agenda()
         a['stocks'][0]['technical']['relative_volume']=0.7
+        self.assertEqual(build(a)['signals'][0]['signal'],'EARLY_BUY_WATCH')
+        a['stocks'][0]['technical']['sma50']=105.0
         self.assertEqual(build(a)['signals'][0]['signal'],'WAIT_FOR_TECHNICAL_CONFIRMATION')
 
     def test_duplicate_symbol_rejected(self):
