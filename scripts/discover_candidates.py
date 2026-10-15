@@ -17,6 +17,21 @@ from scripts.freshness_core import expected_weekday
 
 MIN_SESSIONS = 90
 BACKFILL_DAYS = 540
+MAX_CANDIDATE_WEEKDAY_LAG = 1
+
+def weekday_lag(last_date, cutoff_date):
+    start, end = date.fromisoformat(last_date), date.fromisoformat(cutoff_date)
+    if start > end:
+        return None
+    from datetime import timedelta
+    count = 0
+    current = start
+    while current < end:
+        current += timedelta(days=1)
+        if current.weekday() < 5:
+            count += 1
+    return count
+
 
 def history_count(conn, symbol, cutoff):
     return conn.execute(
@@ -43,6 +58,9 @@ def screen(conn, symbol, min_sessions=MIN_SESSIONS, cutoff_date=None):
     dates = [r[0] for r in rows]
     if len(set(dates)) != len(dates):
         return None, 'DUPLICATE_DATES'
+    lag = weekday_lag(dates[-1], cutoff_date)
+    if lag is None or lag > MAX_CANDIDATE_WEEKDAY_LAG:
+        return None, 'STALE_CANDIDATE'
     closes = [float(r[1]) for r in rows]
     volumes = [int(r[2]) for r in rows]
     avg20 = sum(volumes[-20:]) / 20
@@ -65,6 +83,7 @@ def screen(conn, symbol, min_sessions=MIN_SESSIONS, cutoff_date=None):
         'data_source': 'psxdata REG OHLCV; per-row provenance in SQLite',
         'independent_official_verification': False,
         'completed_session_cutoff': cutoff_date,
+        'weekday_lag': lag, 'freshness': 'FRESH',
     }, None
 
 def collect_discovery(conn, symbols, cutoff, fetcher=None):
@@ -106,7 +125,7 @@ def collect_discovery(conn, symbols, cutoff, fetcher=None):
 
 def make_report(conn, symbols, cutoff, collect=False, fetcher=None):
     result = {
-        'schema_version': '1.1',
+        'schema_version': '1.2',
         'generated_at_utc': datetime.now(timezone.utc).isoformat(),
         'completed_session_cutoff': cutoff,
         'universe_type': 'curated_subset_not_full_psx',
@@ -116,24 +135,37 @@ def make_report(conn, symbols, cutoff, collect=False, fetcher=None):
         'not_investment_advice': True,
         'collection': {'enabled': collect, 'symbols': {}},
         'candidates': [], 'excluded': {}, 'coverage': {},
+        'stale_watchlist': [],
     }
     if collect:
         result['collection']['symbols'] = collect_discovery(conn, symbols, cutoff, fetcher)
     for symbol in symbols:
         candidate, reason = screen(conn, symbol, cutoff_date=cutoff)
         count = history_count(conn, symbol, cutoff)
+        latest_row = conn.execute(
+            "SELECT MAX(trade_date) FROM ohlcv WHERE symbol=? AND market_code='REG' AND trade_date<=?",
+            (symbol, cutoff)).fetchone()
+        latest = latest_row[0] if latest_row else None
+        lag = weekday_lag(latest, cutoff) if latest else None
         result['coverage'][symbol] = {'completed_sessions': count,
+                                     'latest_completed_observation': latest,
+                                     'weekday_lag': lag,
                                      'status': 'READY' if candidate else reason}
         if candidate:
             result['candidates'].append(candidate)
         else:
             result['excluded'][symbol] = reason
+            if reason == 'STALE_CANDIDATE':
+                result['stale_watchlist'].append({'symbol': symbol, 'latest_date': latest,
+                    'weekday_lag': lag, 'status': 'STALE_RESEARCH_ONLY'})
     result['candidates'].sort(key=lambda x: (-x['rank_score'], x['symbol']))
     result['health'] = {
         'configured': len(symbols),
         'screened': len(result['candidates']),
         'data_pending': sum(v == 'DATA_PENDING' for v in result['excluded'].values()),
-        'excluded_other': sum(v != 'DATA_PENDING' for v in result['excluded'].values()),
+        'stale': len(result['stale_watchlist']),
+        'fresh_candidates': len(result['candidates']),
+        'excluded_other': sum(v not in ('DATA_PENDING', 'STALE_CANDIDATE') for v in result['excluded'].values()),
         'source_verified_candidates': 0,
         'actionable_buy_candidates': 0,
         'research_only': True,
@@ -157,8 +189,8 @@ def main():
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
-    print(f"Discovery: {result['health']['screened']}/{len(symbols)} research candidates; "
-          f"{result['health']['data_pending']} DATA_PENDING; cutoff {cutoff}")
+    print(f"Discovery: {result['health']['fresh_candidates']}/{len(symbols)} fresh research candidates; "
+          f"{result['health']['stale']} STALE; {result['health']['data_pending']} DATA_PENDING; cutoff {cutoff}")
     return 0
 
 if __name__ == '__main__':
