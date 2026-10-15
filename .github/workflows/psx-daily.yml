@@ -74,6 +74,12 @@ jobs:
         continue-on-error: true
         run: python scripts/fetch_closing.py --directory closing_files --authorized
 
+      - name: Test official-download diagnostics
+        id: official_diagnostics_tests
+        continue-on-error: true
+        run: |
+          python -m unittest discover -s tests -p 'test_official_download_diagnostics.py' -v
+
       - name: Import, calculate and export
         env:
           AUTHORIZED_CLOSING_URL: ${{ inputs.download_url || vars.PSX_AUTHORIZED_CLOSING_URL }}
@@ -372,6 +378,7 @@ jobs:
           if [ "$INPUT_PUBLISH" = 'true' ] && \
              [ "$ALLOW_PUBLIC" = 'true' ] && \
              [ '${{ steps.freshness.outcome }}' = 'success' ] && \
+             [ '${{ steps.official_diagnostics_tests.outcome }}' = 'success' ] && \
              [ '${{ steps.research_tests.outcome }}' = 'success' ] && \
              [ '${{ steps.research.outcome }}' = 'success' ] && \
              [ '${{ steps.research_artifact.outcome }}' = 'success' ] && \
@@ -425,6 +432,12 @@ jobs:
         if: steps.document_integrity_tests.outcome != 'success' || steps.document_integrity.outcome != 'success' || steps.document_integrity_artifact.outcome != 'success'
         run: |
           echo 'ERROR: financial document integrity tests or report failed.'
+          exit 1
+
+      - name: Mark official-download diagnostics test failure
+        if: steps.official_diagnostics_tests.outcome != 'success'
+        run: |
+          echo 'ERROR: official-download diagnostic tests failed; see earlier logs.'
           exit 1
 
       - name: Mark stale market data as workflow failure
