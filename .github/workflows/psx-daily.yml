@@ -246,6 +246,38 @@ jobs:
           assert all(not x['fundamentals_verified'] and not x['trade_eligible'] for x in r['reviews'])
           PY
 
+      - name: Test financial document integrity
+        id: document_integrity_tests
+        continue-on-error: true
+        run: |
+          python -m unittest discover -s tests -p 'test_financial_document_integrity.py' -v
+          python scripts/financial_document_integrity.py --help > /dev/null
+
+      - name: Generate financial document integrity report
+        id: document_integrity
+        continue-on-error: true
+        if: steps.document_integrity_tests.outcome == 'success'
+        run: |
+          # No local issuer reports provided by default; declare this explicitly.
+          python scripts/financial_document_integrity.py \
+            --fundamentals publish/fundamental_review.json \
+            --out publish/financial_document_integrity.json
+
+      - name: Verify financial document integrity report
+        id: document_integrity_artifact
+        continue-on-error: true
+        run: |
+          test -s publish/financial_document_integrity.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('publish/financial_document_integrity.json').read_text())
+          assert r['health']['symbols']==len(r['reviews'])
+          assert r['health']['trade_eligible']==0
+          assert r['health']['issuer_authenticated']==0
+          assert all(not x['trade_eligible'] and not x['issuer_authenticity_verified'] for x in r['reviews'])
+          PY
+
       - name: Check source freshness
         id: freshness
         continue-on-error: true
@@ -272,6 +304,7 @@ jobs:
             publish/research_validation.json
             publish/source_verification.json
             publish/fundamental_review.json
+            publish/financial_document_integrity.json
             publish/dps_evidence_manifest.json
             publish/psx_analysis_feed.json
             publish/status.json
@@ -348,6 +381,9 @@ jobs:
              [ '${{ steps.fundamentals_tests.outcome }}' = 'success' ] && \
              [ '${{ steps.fundamentals.outcome }}' = 'success' ] && \
              [ '${{ steps.fundamentals_artifact.outcome }}' = 'success' ] && \
+             [ '${{ steps.document_integrity_tests.outcome }}' = 'success' ] && \
+             [ '${{ steps.document_integrity.outcome }}' = 'success' ] && \
+             [ '${{ steps.document_integrity_artifact.outcome }}' = 'success' ] && \
              [ '${{ vars.PSX_DPS_EVIDENCE_CAPTURE_AUTHORIZED }}' != 'true' ]; then
             echo 'can_publish=true' >> "$GITHUB_OUTPUT"
           else
@@ -382,6 +418,12 @@ jobs:
         if: steps.fundamentals_tests.outcome != 'success' || steps.fundamentals.outcome != 'success' || steps.fundamentals_artifact.outcome != 'success'
         run: |
           echo 'ERROR: fundamental disclosure review tests or report failed.'
+          exit 1
+
+      - name: Mark document integrity failures as workflow failure
+        if: steps.document_integrity_tests.outcome != 'success' || steps.document_integrity.outcome != 'success' || steps.document_integrity_artifact.outcome != 'success'
+        run: |
+          echo 'ERROR: financial document integrity tests or report failed.'
           exit 1
 
       - name: Mark stale market data as workflow failure
