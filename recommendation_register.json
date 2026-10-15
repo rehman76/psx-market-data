@@ -1,0 +1,221 @@
+{
+  "schema_version": "1.0",
+  "generated_at_utc": "2026-10-15T13:56:36.754613+00:00",
+  "completed_session_cutoff": "2026-10-15",
+  "scope": "curated_not_full_psx",
+  "research_only": true,
+  "automated_trading": false,
+  "entries": [
+    {
+      "symbol": "MCB",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "SYS",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "KOHE",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "IMAGE",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "EFERT",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "FFC",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "ENGROH",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "HUBC",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "LUCK",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "OGDC",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "PPL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "POL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "UBL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "HBL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "BAFL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "MEBL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "MARI",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "PSO",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "ATRL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "DGKC",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "FCCL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "MLCF",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "TRG",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "NETSOL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "EPCL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "EPQL",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "KAPCO",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "NML",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "ILP",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    },
+    {
+      "symbol": "COLG",
+      "first_seen": "2026-10-15",
+      "last_seen": "2026-10-15",
+      "observations": 1,
+      "status": "WATCH"
+    }
+  ],
+  "note": "Observations count only once per new dated session; no inferred prior recommendation."
+}
