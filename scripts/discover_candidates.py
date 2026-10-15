@@ -16,6 +16,27 @@ from scripts.fetch_psxdata import collect_psxdata_conn
 from scripts.freshness_core import expected_weekday
 from psx_analysis_feed import MARKET_CODES
 
+# Observed in run 38723513213; mappings are NOT independently PSX-verified.
+# These are eligible for research screening only, never automatic trade signals.
+OBSERVED_MARKET_CODES = {
+    'IMAGE': '0839', 'EFERT': '0809', 'FFC': '0809',
+    'ENGROH': '0813', 'HUBC': '0824', 'LUCK': '0804',
+    'OGDC': '0820', 'PPL': '0820', 'POL': '0820',
+    'UBL': '0807', 'HBL': '0807', 'BAFL': '0807', 'MEBL': '0807',
+    'MARI': '0820', 'PSO': '0821', 'ATRL': '0825',
+    'DGKC': '0804', 'FCCL': '0804', 'MLCF': '0804',
+    'TRG': '0828', 'NETSOL': '0828', 'EPCL': '0805',
+    'EPQL': '0824', 'KAPCO': '0824', 'NML': '0829',
+    'ILP': '0829', 'COLG': '0810',
+}
+
+def allowed_market_codes(symbol):
+    if symbol in MARKET_CODES:
+        return MARKET_CODES[symbol]
+    observed = OBSERVED_MARKET_CODES.get(symbol)
+    return ('REG', observed) if observed else ('REG',)
+
+
 MIN_SESSIONS = 90
 BACKFILL_DAYS = 540
 MAX_CANDIDATE_WEEKDAY_LAG = 1
@@ -40,7 +61,7 @@ def selected_rows(conn, symbol, cutoff, limit=120):
     Do not infer unknown official codes or combine volumes. Conflicting
     overlapping records are reported and block screening.
     """
-    allowed = MARKET_CODES.get(symbol, ('REG',))
+    allowed = allowed_market_codes(symbol)
     placeholders = ','.join('?' for _ in allowed)
     rows = conn.execute(f"""
         SELECT trade_date, open, high, low, close, volume, market_code, source_file
@@ -110,6 +131,7 @@ def screen(conn, symbol, min_sessions=MIN_SESSIONS, cutoff_date=None):
         'rank_score': score, 'decision': 'WATCH_RESEARCH_ONLY',
         'data_source': 'Explicitly mapped market codes; per-row provenance in SQLite',
         'latest_market_code': rows[-1]['market_code'],
+        'market_code_mapping_verified': False,
         'latest_source_file': rows[-1]['source_file'],
         'unmapped_market_codes_seen': unknown_codes,
         'independent_official_verification': False,
@@ -156,7 +178,7 @@ def collect_discovery(conn, symbols, cutoff, fetcher=None):
 
 def make_report(conn, symbols, cutoff, collect=False, fetcher=None):
     result = {
-        'schema_version': '1.3',
+        'schema_version': '1.4',
         'generated_at_utc': datetime.now(timezone.utc).isoformat(),
         'completed_session_cutoff': cutoff,
         'universe_type': 'curated_subset_not_full_psx',
@@ -177,7 +199,8 @@ def make_report(conn, symbols, cutoff, collect=False, fetcher=None):
         latest = selected[-1]['date'] if selected else None
         lag = weekday_lag(latest, cutoff) if latest else None
         result['coverage'][symbol] = {'completed_sessions': count,
-                                     'mapped_market_codes': list(MARKET_CODES.get(symbol, ('REG',))),
+                                     'mapped_market_codes': list(allowed_market_codes(symbol)),
+                                     'mapping_verification': 'portfolio_existing_mapping' if symbol in MARKET_CODES else 'observed_unverified' if symbol in OBSERVED_MARKET_CODES else 'REG_only',
                                      'unmapped_market_codes_seen': unknown_codes,
                                      'overlap_conflict_dates': conflicts[:20],
                                      'latest_completed_observation': latest,
