@@ -119,7 +119,9 @@ jobs:
       - name: Test gated technical research validation
         id: research_tests
         continue-on-error: true
-        run: python -m unittest discover -s tests -p 'test_research_validation.py' -v
+        run: |
+          python -m unittest discover -s tests -p 'test_research_validation.py' -v
+          python scripts/research_validation.py --help > /dev/null
 
       - name: Build gated technical research validation
         id: research
