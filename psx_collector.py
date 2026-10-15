@@ -13,6 +13,8 @@ from pathlib import Path
 import sqlite3
 import sys
 from urllib.request import Request, urlopen
+from urllib.parse import urlparse
+from urllib.error import HTTPError
 import zipfile
 
 SCHEMA = """
@@ -144,16 +146,73 @@ def export_csv(conn, output, symbols, market='0807'):
         print(f'EXPORTED {path} ({len(records)} rows)')
 
 
+class OfficialDownloadError(ValueError):
+    """A safe diagnostic code, never an HTTP response body or credentialed URL."""
+    def __init__(self, code):
+        self.code = code
+        super().__init__(code)
+
+
+def inspect_closing_payload(data):
+    """Recognize actual .lis content, not an HTML page containing a pipe."""
+    if not data:
+        raise OfficialDownloadError('EMPTY_RESPONSE')
+    leading = data[:512].lstrip().lower()
+    if leading.startswith((b'<!doctype html', b'<html', b'<?xml', b'{', b'[')):
+        raise OfficialDownloadError('NON_CLOSING_DOCUMENT')
+    if data.startswith((b'\x1f\x9d', b'\x1f\xa0')):
+        raise OfficialDownloadError('UNSUPPORTED_UNIX_COMPRESS_Z')
+    if zipfile.is_zipfile(BytesIO(data)):
+        try:
+            with zipfile.ZipFile(BytesIO(data)) as archive:
+                members = [i for i in archive.infolist()
+                           if not i.is_dir() and i.filename.lower().endswith('.lis')]
+                if not members:
+                    raise OfficialDownloadError('INVALID_CLOSING_ZIP')
+                if any(m.file_size > 15 * 1024 * 1024 for m in archive.infolist()):
+                    raise OfficialDownloadError('CLOSING_MEMBER_TOO_LARGE')
+                if archive.testzip() is not None:
+                    raise OfficialDownloadError('INVALID_CLOSING_ZIP')
+                for member in members:
+                    if member.file_size > 15 * 1024 * 1024:
+                        raise OfficialDownloadError('CLOSING_MEMBER_TOO_LARGE')
+                    rows, rejected = parse_lines(archive.read(member), member.filename)
+                    # Official files can contain a small number of malformed
+                    # instrument records; reject pages masquerading as data.
+                    if not rows or len(rejected) > max(3, len(rows) // 20):
+                        raise OfficialDownloadError('INVALID_CLOSING_ROWS')
+        except (zipfile.BadZipFile, RuntimeError):
+            raise OfficialDownloadError('INVALID_CLOSING_ZIP') from None
+        return 'ZIP_LIS'
+    rows, rejected = parse_lines(data, 'downloaded.lis')
+    if not rows or len(rejected) > max(3, len(rows) // 20):
+        raise OfficialDownloadError('INVALID_CLOSING_ROWS')
+    return 'RAW_LIS'
+
+
 def fetch_authorized(url, output, timeout=25):
-    if not url.startswith('https://'):
-        raise ValueError('Only HTTPS URLs accepted')
+    parsed = urlparse(url)
+    if (parsed.scheme != 'https' or parsed.hostname != 'dps.psx.com.pk'
+            or parsed.username or parsed.password):
+        raise OfficialDownloadError('SOURCE_URL_NOT_AUTHORIZED')
     request = Request(url, headers={'User-Agent': 'PSX-Research-Collector/1.0 (authorized access)'})
-    with urlopen(request, timeout=timeout) as response:
-        data = response.read(15 * 1024 * 1024 + 1)
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            final_url = urlparse(response.geturl())
+            if (final_url.scheme != 'https' or final_url.hostname != 'dps.psx.com.pk'
+                    or final_url.username or final_url.password):
+                raise OfficialDownloadError('REDIRECT_OUTSIDE_AUTHORIZED_HOST')
+            data = response.read(15 * 1024 * 1024 + 1)
+    except OfficialDownloadError:
+        raise
+    except HTTPError as exc:
+        raise OfficialDownloadError('HTTP_STATUS_' + str(exc.code)) from None
+    except Exception as exc:
+        # Avoid leaking full URLs, query tokens, or HTTP response bodies in logs.
+        raise OfficialDownloadError('DOWNLOAD_TRANSPORT_' + type(exc).__name__.upper()) from None
     if len(data) > 15 * 1024 * 1024:
-        raise ValueError('Download exceeds 15 MB safety limit')
-    if not zipfile.is_zipfile(BytesIO(data)) and b'|' not in data[:500]:
-        raise ValueError('Response does not appear to be a PSX closing file')
+        raise OfficialDownloadError('DOWNLOAD_TOO_LARGE')
+    inspect_closing_payload(data)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(data)
     return output
