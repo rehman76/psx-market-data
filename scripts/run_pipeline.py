@@ -18,6 +18,7 @@ from psx_collector import connect, import_paths, fetch_authorized
 from psx_analysis_feed import build
 from scripts.fetch_psxdata import collect_psxdata_conn
 from scripts.freshness_core import assess, expected_weekday
+from scripts.official_url_template import resolve_download_url
 
 
 def main():
@@ -48,12 +49,9 @@ def main():
         'psxdata': {'enabled': False},
     }
     if args.download_url:
-        url = args.download_url.strip()
-        parsed = urlparse(url)
-        # Deliberately restrict automated downloading to the PSX official host.
-        if parsed.scheme != 'https' or parsed.hostname != 'dps.psx.com.pk':
-            raise SystemExit('Download URL must be a verified, permitted https://dps.psx.com.pk/... file URL')
         try:
+            url, target_date = resolve_download_url(args.download_url)
+            status['download_session_date'] = target_date
             target = source / ('authorized_' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '.lis.Z')
             fetch_authorized(url, target)
             status['download_succeeded'] = True
@@ -61,7 +59,7 @@ def main():
         except Exception as exc:
             # Only a fixed diagnostic code is emitted by fetch_authorized;
             # never print a configured download URL or its query string.
-            status['download_error'] = getattr(exc, 'code', 'UNEXPECTED_DOWNLOAD_ERROR')
+            status['download_error'] = getattr(exc, 'code', str(exc) if isinstance(exc, ValueError) else 'UNEXPECTED_DOWNLOAD_ERROR')
             status['official_download_health'] = 'DOWNLOAD_FAILED'
             print('Official PSX download failed:', status['download_error'], file=sys.stderr)
     db = Path(args.db)
