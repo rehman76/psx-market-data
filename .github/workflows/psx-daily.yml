@@ -99,6 +99,23 @@ jobs:
             --symbols MCB SYS KOHE \
             "${PSXDATA_ARGS[@]}"
 
+      - name: Build optional research discovery watchlist
+        # Isolated from portfolio feed; failure must not corrupt existing reporting.
+        continue-on-error: true
+        env:
+          PSXDATA_AUTOMATED_USE_AUTHORIZED: ${{ vars.PSXDATA_AUTOMATED_USE_AUTHORIZED }}
+        shell: bash
+        run: |
+          DISCOVERY_ARGS=()
+          if [ "${PSXDATA_AUTOMATED_USE_AUTHORIZED:-}" = 'true' ]; then
+            DISCOVERY_ARGS=(--collect-authorized)
+          fi
+          python scripts/discover_candidates.py \
+            --db state/psx_ohlcv.sqlite \
+            --config config/discovery_universe.json \
+            --out publish/discovery_watchlist.json \
+            "${DISCOVERY_ARGS[@]}"
+
       - name: Check source freshness
         id: freshness
         continue-on-error: true
@@ -121,6 +138,7 @@ jobs:
         with:
           name: psx-analysis-feed
           path: |
+            publish/discovery_watchlist.json
             publish/psx_analysis_feed.json
             publish/status.json
             publish/psxdata_status.json
