@@ -5,6 +5,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from psx_collector import fetch_authorized, inspect_closing_payload, OfficialDownloadError
 
@@ -54,6 +55,15 @@ class ClosingPayloadDiagnosticsTest(unittest.TestCase):
                 with self.assertRaises(OfficialDownloadError) as cm:
                     fetch_authorized(URL,target)
             self.assertEqual(str(cm.exception),'NON_CLOSING_DOCUMENT')
+            self.assertNotIn('TOP_SECRET',str(cm.exception))
+            self.assertFalse(target.exists())
+    def test_http_failure_records_only_status(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target=Path(tmp)/'out.lis.Z'
+            with patch('psx_collector.urlopen',side_effect=HTTPError(URL,403,'secret access denied',{},None)):
+                with self.assertRaises(OfficialDownloadError) as cm:
+                    fetch_authorized(URL,target)
+            self.assertEqual(cm.exception.code,'HTTP_STATUS_403')
             self.assertNotIn('TOP_SECRET',str(cm.exception))
             self.assertFalse(target.exists())
     def test_valid_payload_is_written(self):
