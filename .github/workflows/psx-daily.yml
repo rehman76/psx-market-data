@@ -79,6 +79,7 @@ jobs:
         continue-on-error: true
         run: |
           python -m unittest discover -s tests -p 'test_official_download_diagnostics.py' -v
+          python -m unittest discover -s tests -p 'test_official_url_template.py' -v
 
       - name: Import, calculate and export
         env:
@@ -173,9 +174,15 @@ jobs:
           # Only run_pipeline.py creates these names after an explicit authorized download.
           mapfile -t FILES < <(find closing_files -maxdepth 1 -name 'authorized_*.lis.Z' -type f -print)
           test "${#FILES[@]}" -eq 1
+          RESOLVED_CLOSING_URL="$(python - <<'PY'
+          import os
+          from scripts.official_url_template import resolve_download_url
+          print(resolve_download_url(os.environ['AUTHORIZED_CLOSING_URL'])[0])
+          PY
+          )"
           python scripts/dps_closing_evidence.py \
             --file "${FILES[0]}" \
-            --source-url "${AUTHORIZED_CLOSING_URL}" \
+            --source-url "${RESOLVED_CLOSING_URL}" \
             --discovery publish/discovery_watchlist.json \
             --out "${RUNNER_TEMP}/dps_evidence.json" \
             --manifest publish/dps_evidence_manifest.json
