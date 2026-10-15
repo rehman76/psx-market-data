@@ -116,6 +116,15 @@ jobs:
             --out publish/discovery_watchlist.json \
             "${DISCOVERY_ARGS[@]}"
 
+      - name: Build gated technical research validation
+        # Diagnostics only: no automated BUY/SELL signals or external data redistribution.
+        continue-on-error: true
+        run: |
+          python scripts/research_validation.py \
+            --db state/psx_ohlcv.sqlite \
+            --discovery publish/discovery_watchlist.json \
+            --out publish/research_validation.json
+
       - name: Check source freshness
         id: freshness
         continue-on-error: true
@@ -139,6 +148,7 @@ jobs:
           name: psx-analysis-feed
           path: |
             publish/discovery_watchlist.json
+            publish/research_validation.json
             publish/psx_analysis_feed.json
             publish/status.json
             publish/psxdata_status.json
