@@ -14,6 +14,7 @@ import sqlite3
 import sys
 from urllib.request import Request, urlopen
 from urllib.parse import urlparse
+from urllib.error import HTTPError
 import zipfile
 
 SCHEMA = """
@@ -204,6 +205,8 @@ def fetch_authorized(url, output, timeout=25):
             data = response.read(15 * 1024 * 1024 + 1)
     except OfficialDownloadError:
         raise
+    except HTTPError as exc:
+        raise OfficialDownloadError('HTTP_STATUS_' + str(exc.code)) from None
     except Exception as exc:
         # Avoid leaking full URLs, query tokens, or HTTP response bodies in logs.
         raise OfficialDownloadError('DOWNLOAD_TRANSPORT_' + type(exc).__name__.upper()) from None
