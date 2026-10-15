@@ -43,6 +43,7 @@ def main():
         'run_at_utc': datetime.now(timezone.utc).isoformat(),
         'download_attempted': bool(args.download_url),
         'download_succeeded': False,
+        'official_download_health': 'NOT_CONFIGURED',
         'import_failures': 0,
         'psxdata': {'enabled': False},
     }
@@ -56,9 +57,13 @@ def main():
             target = source / ('authorized_' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '.lis.Z')
             fetch_authorized(url, target)
             status['download_succeeded'] = True
+            status['official_download_health'] = 'CLOSING_FILE_DOWNLOADED_FORMAT_VALID'
         except Exception as exc:
-            status['download_error'] = str(exc)
-            print('Download failed:', exc, file=sys.stderr)
+            # Only a fixed diagnostic code is emitted by fetch_authorized;
+            # never print a configured download URL or its query string.
+            status['download_error'] = getattr(exc, 'code', 'UNEXPECTED_DOWNLOAD_ERROR')
+            status['official_download_health'] = 'DOWNLOAD_FAILED'
+            print('Official PSX download failed:', status['download_error'], file=sys.stderr)
     db = Path(args.db)
     db.parent.mkdir(parents=True, exist_ok=True)
     with connect(db) as conn:
@@ -96,11 +101,16 @@ def main():
     psx_ok = bool(status['psxdata'].get('ok'))
     status['sources'] = {
         'official_psx': {'download_attempted': status['download_attempted'],
+                         'download_health': status['official_download_health'],
+                         'independently_verified': False,
                          'download_succeeded': status['download_succeeded'],
                          'error': status.get('download_error')},
         'psxdata': {'enabled': bool(status['psxdata'].get('enabled')),
                     'ok': psx_ok, 'inserted_rows': status['psxdata'].get('totals', {}).get('inserted_rows', 0)}
     }
+    status['data_quality_warnings'] = (['OFFICIAL_PSX_DOWNLOAD_NOT_VERIFIED']
+                                       if not status['download_succeeded'] else
+                                       ['OFFICIAL_PSX_FORMAT_VALID_BUT_NOT_INDEPENDENTLY_VERIFIED'])
     status['pipeline_status'] = ('fresh' if freshness['fresh'] and status['data_available']
                                  else 'stale_or_insufficient' if status['data_available'] else 'unavailable')
     # The feed intentionally does not assert that data is fresh merely because it was generated now.
