@@ -9,6 +9,11 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import sqlite3
+import sys
+
+# Support the direct script invocation used by GitHub Actions.
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 from scripts.discover_candidates import selected_rows, weekday_lag, MAX_CANDIDATE_WEEKDAY_LAG
 from psx_analysis_feed import rsi_wilder, macd_hist, atr_wilder, round_or_none
