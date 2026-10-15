@@ -10,6 +10,7 @@ import json
 import math
 from pathlib import Path
 import sqlite3
+from scripts.freshness_core import expected_weekday
 
 MARKET_CODES = {
     "MCB": ("REG", "0807"),
@@ -78,7 +79,7 @@ def round_or_none(value):
     return round(value, 5) if value is not None and math.isfinite(value) else None
 
 
-def read_candles(conn, symbol, limit):
+def read_candles(conn, symbol, limit, cutoff_date=None):
     allowed = MARKET_CODES.get(symbol)
 
     if not allowed:
@@ -86,6 +87,7 @@ def read_candles(conn, symbol, limit):
             f"{symbol}: no verified market-code mapping configured"
         ]
 
+    cutoff_date = cutoff_date or expected_weekday().isoformat()
     placeholders = ",".join("?" for _ in allowed)
 
     rows = conn.execute(
@@ -94,6 +96,7 @@ def read_candles(conn, symbol, limit):
                volume, source_file, market_code
         FROM ohlcv
         WHERE symbol = ?
+          AND trade_date <= ?
           AND market_code IN ({placeholders})
           AND open > 0
           AND high > 0
@@ -102,7 +105,7 @@ def read_candles(conn, symbol, limit):
           AND volume >= 0
         ORDER BY trade_date DESC
         """,
-        (symbol, *allowed)
+        (symbol, cutoff_date, *allowed)
     ).fetchall()
 
     candles_by_date = {}
@@ -164,8 +167,9 @@ def read_candles(conn, symbol, limit):
     return candles, code, warnings
 
 
-def build(conn, symbol, limit):
-    candles, market_code, warnings = read_candles(conn, symbol, limit)
+def build(conn, symbol, limit, cutoff_date=None):
+    cutoff_date = cutoff_date or expected_weekday().isoformat()
+    candles, market_code, warnings = read_candles(conn, symbol, limit, cutoff_date)
     closes = [r['close'] for r in candles]
     vols = [r['volume'] for r in candles]
     last = candles[-1] if candles else None
@@ -182,6 +186,7 @@ def build(conn, symbol, limit):
     }
     return {
         'symbol': symbol, 'market_code': market_code,
+        'completed_session_cutoff': cutoff_date,
         'source': 'PSX closing files imported locally; psxdata used for missing sessions' if uses_psxdata else 'PSX closing files imported locally',
         'latest_trade_date': last['date'] if last else None,
         'earliest_trade_date': candles[0]['date'] if candles else None,
@@ -201,10 +206,11 @@ def main():
     args = ap.parse_args()
     if args.history < 50:
         ap.error('--history must be at least 50')
+    cutoff_date = expected_weekday().isoformat()
     with sqlite3.connect(args.db) as conn:
         result = {'schema_version': '1.0', 'generated_at_utc': datetime.now(timezone.utc).isoformat(),
                   'source_policy': 'Official PSX closing files; unadjusted prices; no automatic download',
-                  'stocks': [build(conn, s.upper(), args.history) for s in args.symbols]}
+                  'stocks': [build(conn, s.upper(), args.history, cutoff_date) for s in args.symbols]}
     dest = Path(args.out)
     dest.parent.mkdir(parents=True, exist_ok=True)
     temp = dest.with_suffix(dest.suffix + '.tmp')
