@@ -1,7 +1,7 @@
 import sqlite3
 import unittest
 from datetime import date, timedelta
-from scripts.discover_candidates import make_report, screen, history_count, MIN_SESSIONS
+from scripts.discover_candidates import make_report, screen, history_count, MIN_SESSIONS, OBSERVED_MARKET_CODES
 
 class MarketCodeReconciliationTests(unittest.TestCase):
     def setUp(self):
@@ -40,6 +40,19 @@ class MarketCodeReconciliationTests(unittest.TestCase):
         report=make_report(self.db,['MCB'],'2026-10-14')
         self.assertEqual(report['excluded']['MCB'],'STALE_CANDIDATE')
         self.assertIn('9999',report['coverage']['MCB']['unmapped_market_codes_seen'])
+    def test_observed_code_extends_history_but_stays_unverified(self):
+        self.seed('IMAGE',last='2026-10-09')
+        for day in ('2026-10-12','2026-10-13','2026-10-14'):
+            self.db.execute("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?)",
+                            (day,'IMAGE','0839',100,110,90,100,1000,'closing-file'))
+        report=make_report(self.db,['IMAGE'],'2026-10-14')
+        self.assertEqual(report['health']['fresh_candidates'],1)
+        self.assertFalse(report['candidates'][0]['market_code_mapping_verified'])
+        self.assertEqual(report['coverage']['IMAGE']['mapping_verification'],'observed_unverified')
+        self.assertEqual(report['candidates'][0]['decision'],'WATCH_RESEARCH_ONLY')
+    def test_all_observed_mappings_are_four_digit_codes(self):
+        self.assertEqual(len(OBSERVED_MARKET_CODES),27)
+        self.assertTrue(all(code.isdigit() and len(code)==4 for code in OBSERVED_MARKET_CODES.values()))
     def test_same_date_matching_records_not_double_counted(self):
         self.seed()
         self.db.execute("INSERT INTO ohlcv VALUES (?,?,?,?,?,?,?,?,?)",
