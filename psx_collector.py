@@ -159,14 +159,18 @@ def inspect_closing_payload(data):
     leading = data[:512].lstrip().lower()
     if leading.startswith((b'<!doctype html', b'<html', b'<?xml', b'{', b'[')):
         raise OfficialDownloadError('NON_CLOSING_DOCUMENT')
-    if data.startswith((b'\\x1f\\x9d', b'\\x1f\\xa0')):
+    if data.startswith((b'\x1f\x9d', b'\x1f\xa0')):
         raise OfficialDownloadError('UNSUPPORTED_UNIX_COMPRESS_Z')
     if zipfile.is_zipfile(BytesIO(data)):
         try:
             with zipfile.ZipFile(BytesIO(data)) as archive:
                 members = [i for i in archive.infolist()
                            if not i.is_dir() and i.filename.lower().endswith('.lis')]
-                if not members or archive.testzip() is not None:
+                if not members:
+                    raise OfficialDownloadError('INVALID_CLOSING_ZIP')
+                if any(m.file_size > 15 * 1024 * 1024 for m in archive.infolist()):
+                    raise OfficialDownloadError('CLOSING_MEMBER_TOO_LARGE')
+                if archive.testzip() is not None:
                     raise OfficialDownloadError('INVALID_CLOSING_ZIP')
                 for member in members:
                     if member.file_size > 15 * 1024 * 1024:
@@ -174,13 +178,13 @@ def inspect_closing_payload(data):
                     rows, rejected = parse_lines(archive.read(member), member.filename)
                     # Official files can contain a small number of malformed
                     # instrument records; reject pages masquerading as data.
-                    if not rows or len(rejected) > max(20, len(rows) // 10):
+                    if not rows or len(rejected) > max(3, len(rows) // 20):
                         raise OfficialDownloadError('INVALID_CLOSING_ROWS')
         except (zipfile.BadZipFile, RuntimeError):
             raise OfficialDownloadError('INVALID_CLOSING_ZIP') from None
         return 'ZIP_LIS'
     rows, rejected = parse_lines(data, 'downloaded.lis')
-    if not rows or len(rejected) > max(20, len(rows) // 10):
+    if not rows or len(rejected) > max(3, len(rows) // 20):
         raise OfficialDownloadError('INVALID_CLOSING_ROWS')
     return 'RAW_LIS'
 
