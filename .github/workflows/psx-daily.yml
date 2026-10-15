@@ -214,6 +214,38 @@ jobs:
           assert all(not x['independently_verified'] for x in r['reviews'])
           PY
 
+      - name: Test fundamental disclosure review
+        id: fundamentals_tests
+        continue-on-error: true
+        run: |
+          python -m unittest discover -s tests -p 'test_fundamental_review.py' -v
+          python scripts/fundamental_review.py --help > /dev/null
+
+      - name: Generate fundamental disclosure review
+        id: fundamentals
+        continue-on-error: true
+        if: steps.fundamentals_tests.outcome == 'success'
+        run: |
+          # No disclosure input is silently assumed: by default all symbols are pending.
+          python scripts/fundamental_review.py \
+            --discovery publish/discovery_watchlist.json \
+            --out publish/fundamental_review.json
+
+      - name: Validate fundamental review artifact
+        id: fundamentals_artifact
+        continue-on-error: true
+        run: |
+          test -s publish/fundamental_review.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          r=json.loads(Path('publish/fundamental_review.json').read_text())
+          assert r['health']['symbols']==len(r['reviews'])
+          assert r['health']['trade_eligible']==0
+          assert r['health']['fundamentally_verified']==0
+          assert all(not x['fundamentals_verified'] and not x['trade_eligible'] for x in r['reviews'])
+          PY
+
       - name: Check source freshness
         id: freshness
         continue-on-error: true
@@ -239,6 +271,7 @@ jobs:
             publish/discovery_watchlist.json
             publish/research_validation.json
             publish/source_verification.json
+            publish/fundamental_review.json
             publish/dps_evidence_manifest.json
             publish/psx_analysis_feed.json
             publish/status.json
@@ -312,6 +345,9 @@ jobs:
              [ '${{ steps.source_audit.outcome }}' = 'success' ] && \
              [ '${{ steps.source_artifact.outcome }}' = 'success' ] && \
              [ '${{ steps.dps_evidence_tests.outcome }}' = 'success' ] && \
+             [ '${{ steps.fundamentals_tests.outcome }}' = 'success' ] && \
+             [ '${{ steps.fundamentals.outcome }}' = 'success' ] && \
+             [ '${{ steps.fundamentals_artifact.outcome }}' = 'success' ] && \
              [ '${{ vars.PSX_DPS_EVIDENCE_CAPTURE_AUTHORIZED }}' != 'true' ]; then
             echo 'can_publish=true' >> "$GITHUB_OUTPUT"
           else
@@ -340,6 +376,12 @@ jobs:
         if: steps.dps_evidence_tests.outcome != 'success' || (vars.PSX_DPS_EVIDENCE_CAPTURE_AUTHORIZED == 'true' && steps.dps_evidence_capture.outcome != 'success')
         run: |
           echo 'ERROR: authorized DPS evidence adapter tests or capture failed.'
+          exit 1
+
+      - name: Mark fundamental review failures as workflow failure
+        if: steps.fundamentals_tests.outcome != 'success' || steps.fundamentals.outcome != 'success' || steps.fundamentals_artifact.outcome != 'success'
+        run: |
+          echo 'ERROR: fundamental disclosure review tests or report failed.'
           exit 1
 
       - name: Mark stale market data as workflow failure
