@@ -309,6 +309,18 @@ jobs:
           assert all(not x['trade_eligible'] and not x['issuer_authenticity_verified'] for x in r['reviews'])
           PY
 
+      - name: Test dated price reconciliation
+        run: python -m unittest discover -s tests -p 'test_price_reconciliation.py' -v
+
+      - name: Build three-source price reconciliation report
+        run: |
+          python scripts/price_reconciliation.py \
+            --discovery publish/discovery_watchlist.json \
+            --technical publish/research_validation.json \
+            --source publish/source_verification.json \
+            --confirmations config/user_confirmed_prices.json \
+            --out publish/price_reconciliation.json
+
       - name: Test research coordinator
         run: python -m unittest discover -s tests -p 'test_research_coordinator.py' -v
 
@@ -346,6 +358,7 @@ jobs:
           path: |
             publish/discovery_watchlist.json
             publish/research_agenda.json
+            publish/price_reconciliation.json
             publish/recommendation_register.json
             publish/research_validation.json
             publish/source_verification.json
