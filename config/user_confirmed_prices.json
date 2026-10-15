@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "provenance": "USER_CONFIRMED_IN_CHAT_NOT_OFFICIAL",
+  "description": "User explicitly confirmed the values for October 15, 2026; observation time and quote/closing classification not independently established. These entries are not official DPS proof.",
+  "observations": [
+    {
+      "symbol": "MCB",
+      "trade_date": "2026-10-15",
+      "price_pkr": 371.08,
+      "price_type": "USER_CONFIRMED_SESSION_PRICE",
+      "confirmation_source": "user_chat_confirmation",
+      "independently_verified": false
+    },
+    {
+      "symbol": "SYS",
+      "trade_date": "2026-10-15",
+      "price_pkr": 115.96,
+      "price_type": "USER_CONFIRMED_SESSION_PRICE",
+      "confirmation_source": "user_chat_confirmation",
+      "independently_verified": false
+    }
+  ]
+}
