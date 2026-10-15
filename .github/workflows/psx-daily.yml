@@ -52,6 +52,7 @@ jobs:
           if git ls-remote --exit-code --heads origin psx-state >/dev/null 2>&1; then
             git fetch --depth=1 origin psx-state
             git show FETCH_HEAD:psx_ohlcv.sqlite > state/psx_ohlcv.sqlite || true
+            git show FETCH_HEAD:recommendation_register.json > state/recommendation_register.json 2>/dev/null || rm -f state/recommendation_register.json
           fi
 
       - name: Optional one-time bootstrap from sample
@@ -308,6 +309,19 @@ jobs:
           assert all(not x['trade_eligible'] and not x['issuer_authenticity_verified'] for x in r['reviews'])
           PY
 
+      - name: Test research coordinator
+        run: python -m unittest discover -s tests -p 'test_research_coordinator.py' -v
+
+      - name: Build research agenda and persistent watch register
+        run: |
+          EXTRA=()
+          if [ -s state/recommendation_register.json ]; then
+            EXTRA=(--previous state/recommendation_register.json)
+          fi
+          python scripts/research_coordinator.py "${EXTRA[@]}" \
+            --agenda-out publish/research_agenda.json \
+            --register-out publish/recommendation_register.json
+
       - name: Check source freshness
         id: freshness
         continue-on-error: true
@@ -331,6 +345,8 @@ jobs:
           name: psx-analysis-feed
           path: |
             publish/discovery_watchlist.json
+            publish/research_agenda.json
+            publish/recommendation_register.json
             publish/research_validation.json
             publish/source_verification.json
             publish/official_source_health.md
@@ -347,6 +363,7 @@ jobs:
         shell: bash
         run: |
           cp state/psx_ohlcv.sqlite "$RUNNER_TEMP/psx_ohlcv.sqlite"
+          cp publish/recommendation_register.json "$RUNNER_TEMP/recommendation_register.json"
 
           git fetch origin psx-state:refs/remotes/origin/psx-state 2>/dev/null || true
           # Refuse to overwrite a remote DB that gained a newer session while this job ran.
@@ -381,10 +398,11 @@ jobs:
           fi
 
           cp "$RUNNER_TEMP/psx_ohlcv.sqlite" "$RUNNER_TEMP/psx-state/psx_ohlcv.sqlite"
+          cp "$RUNNER_TEMP/recommendation_register.json" "$RUNNER_TEMP/psx-state/recommendation_register.json"
 
           (
             cd "$RUNNER_TEMP/psx-state"
-            git add psx_ohlcv.sqlite
+            git add psx_ohlcv.sqlite recommendation_register.json
 
             if ! git diff --cached --quiet; then
               git commit -m 'Update PSX OHLCV state'
