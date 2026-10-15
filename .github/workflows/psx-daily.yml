@@ -147,6 +147,33 @@ jobs:
           assert all(not r.get('trade_eligible', False) for r in p['reviews'])
           PY
 
+      - name: Test authorized DPS closing-file adapter
+        id: dps_evidence_tests
+        continue-on-error: true
+        run: |
+          python -m unittest discover -s tests -p 'test_dps_closing_evidence.py' -v
+          python scripts/dps_closing_evidence.py --help > /dev/null
+
+      - name: Extract evidence from explicitly authorized official download
+        id: dps_evidence_capture
+        continue-on-error: true
+        if: vars.PSX_DPS_EVIDENCE_CAPTURE_AUTHORIZED == 'true'
+        env:
+          AUTHORIZED_CLOSING_URL: ${{ inputs.download_url || vars.PSX_AUTHORIZED_CLOSING_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${AUTHORIZED_CLOSING_URL:-}"
+          # Only run_pipeline.py creates these names after an explicit authorized download.
+          mapfile -t FILES < <(find closing_files -maxdepth 1 -name 'authorized_*.lis.Z' -type f -print)
+          test "${#FILES[@]}" -eq 1
+          python scripts/dps_closing_evidence.py \
+            --file "${FILES[0]}" \
+            --source-url "${AUTHORIZED_CLOSING_URL}" \
+            --discovery publish/discovery_watchlist.json \
+            --out "${RUNNER_TEMP}/dps_evidence.json" \
+            --manifest publish/dps_evidence_manifest.json
+
       - name: Test source evidence auditor
         id: source_tests
         continue-on-error: true
@@ -161,10 +188,16 @@ jobs:
         run: |
           # No submitted evidence yet: emit explicit NO_INDEPENDENT_EVIDENCE,
           # rather than treating existing provider records as independent DPS.
+          SOURCE_ARGS=()
+          if [ "${{ steps.dps_evidence_capture.outcome }}" = 'success' ] && \
+             [ -s "${RUNNER_TEMP}/dps_evidence.json" ]; then
+            SOURCE_ARGS=(--evidence "${RUNNER_TEMP}/dps_evidence.json")
+          fi
           python scripts/source_verification.py \
             --db state/psx_ohlcv.sqlite \
             --discovery publish/discovery_watchlist.json \
-            --out publish/source_verification.json
+            --out publish/source_verification.json \
+            "${SOURCE_ARGS[@]}"
 
       - name: Validate source evidence report
         id: source_artifact
@@ -206,6 +239,7 @@ jobs:
             publish/discovery_watchlist.json
             publish/research_validation.json
             publish/source_verification.json
+            publish/dps_evidence_manifest.json
             publish/psx_analysis_feed.json
             publish/status.json
             publish/psxdata_status.json
@@ -276,7 +310,9 @@ jobs:
              [ '${{ steps.research_artifact.outcome }}' = 'success' ] && \
              [ '${{ steps.source_tests.outcome }}' = 'success' ] && \
              [ '${{ steps.source_audit.outcome }}' = 'success' ] && \
-             [ '${{ steps.source_artifact.outcome }}' = 'success' ]; then
+             [ '${{ steps.source_artifact.outcome }}' = 'success' ] && \
+             [ '${{ steps.dps_evidence_tests.outcome }}' = 'success' ] && \
+             [ '${{ vars.PSX_DPS_EVIDENCE_CAPTURE_AUTHORIZED }}' != 'true' ]; then
             echo 'can_publish=true' >> "$GITHUB_OUTPUT"
           else
             echo 'can_publish=false' >> "$GITHUB_OUTPUT"
@@ -298,6 +334,12 @@ jobs:
         if: steps.source_tests.outcome != 'success' || steps.source_audit.outcome != 'success' || steps.source_artifact.outcome != 'success'
         run: |
           echo 'ERROR: PSX evidence audit tests or output failed; see diagnostic steps.'
+          exit 1
+
+      - name: Mark authorized evidence capture failures as workflow failure
+        if: steps.dps_evidence_tests.outcome != 'success' || (vars.PSX_DPS_EVIDENCE_CAPTURE_AUTHORIZED == 'true' && steps.dps_evidence_capture.outcome != 'success')
+        run: |
+          echo 'ERROR: authorized DPS evidence adapter tests or capture failed.'
           exit 1
 
       - name: Mark stale market data as workflow failure
