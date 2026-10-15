@@ -106,6 +106,22 @@ jobs:
             --symbols MCB SYS KOHE \
             "${PSXDATA_ARGS[@]}"
 
+      - name: Test official source health summary
+        id: official_health_tests
+        continue-on-error: true
+        run: |
+          python -m unittest discover -s tests -p 'test_official_source_summary.py' -v
+
+      - name: Summarize official source health
+        id: official_health_summary
+        continue-on-error: true
+        if: steps.official_health_tests.outcome == 'success'
+        run: |
+          python scripts/official_source_summary.py \
+            --status publish/status.json \
+            --out publish/official_source_health.md
+          cat publish/official_source_health.md >> "$GITHUB_STEP_SUMMARY"
+
       - name: Build optional research discovery watchlist
         # Isolated from portfolio feed; failure must not corrupt existing reporting.
         continue-on-error: true
@@ -317,6 +333,7 @@ jobs:
             publish/discovery_watchlist.json
             publish/research_validation.json
             publish/source_verification.json
+            publish/official_source_health.md
             publish/fundamental_review.json
             publish/financial_document_integrity.json
             publish/dps_evidence_manifest.json
@@ -386,6 +403,8 @@ jobs:
              [ "$ALLOW_PUBLIC" = 'true' ] && \
              [ '${{ steps.freshness.outcome }}' = 'success' ] && \
              [ '${{ steps.official_diagnostics_tests.outcome }}' = 'success' ] && \
+             [ '${{ steps.official_health_tests.outcome }}' = 'success' ] && \
+             [ '${{ steps.official_health_summary.outcome }}' = 'success' ] && \
              [ '${{ steps.research_tests.outcome }}' = 'success' ] && \
              [ '${{ steps.research.outcome }}' = 'success' ] && \
              [ '${{ steps.research_artifact.outcome }}' = 'success' ] && \
@@ -445,6 +464,12 @@ jobs:
         if: steps.official_diagnostics_tests.outcome != 'success'
         run: |
           echo 'ERROR: official-download diagnostic tests failed; see earlier logs.'
+          exit 1
+
+      - name: Mark official source health summary failures
+        if: steps.official_health_tests.outcome != 'success' || steps.official_health_summary.outcome != 'success'
+        run: |
+          echo 'ERROR: official source summary generation failed.'
           exit 1
 
       - name: Mark stale market data as workflow failure
