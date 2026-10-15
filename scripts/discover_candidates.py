@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.fetch_psxdata import collect_psxdata_conn
 from scripts.freshness_core import expected_weekday
+from psx_analysis_feed import MARKET_CODES
 
 MIN_SESSIONS = 90
 BACKFILL_DAYS = 540
@@ -33,36 +34,63 @@ def weekday_lag(last_date, cutoff_date):
     return count
 
 
+def selected_rows(conn, symbol, cutoff, limit=120):
+    """Select one candle per date using only explicitly mapped market codes.
+
+    Do not infer unknown official codes or combine volumes. Conflicting
+    overlapping records are reported and block screening.
+    """
+    allowed = MARKET_CODES.get(symbol, ('REG',))
+    placeholders = ','.join('?' for _ in allowed)
+    rows = conn.execute(f"""
+        SELECT trade_date, open, high, low, close, volume, market_code, source_file
+        FROM ohlcv
+        WHERE symbol=? AND trade_date<=? AND market_code IN ({placeholders})
+          AND open>0 AND high>0 AND low>0 AND close>0 AND volume>=0
+          AND low<=open AND open<=high AND low<=close AND close<=high
+        ORDER BY trade_date DESC
+    """, (symbol, cutoff, *allowed)).fetchall()
+    priority = {code: i for i, code in enumerate(allowed)}
+    by_date, conflicts = {}, []
+    for day, op, hi, lo, cl, vol, code, source in rows:
+        record = {'date': day, 'open': op, 'high': hi, 'low': lo,
+                  'close': cl, 'volume': vol, 'market_code': code,
+                  'source_file': source}
+        previous = by_date.get(day)
+        if previous:
+            if (any(abs(float(previous[k])-float(record[k]))>0.005
+                    for k in ('open','high','low','close')) or
+                    int(previous['volume']) != int(record['volume'])):
+                conflicts.append(day)
+            if priority[code] <= priority[previous['market_code']]:
+                continue
+        by_date[day] = record
+    selected = [by_date[d] for d in sorted(by_date)[-limit:]]
+    unknown_codes = [r[0] for r in conn.execute(
+        f"""SELECT DISTINCT market_code FROM ohlcv
+             WHERE symbol=? AND trade_date<=? AND market_code NOT IN ({placeholders})""",
+        (symbol, cutoff, *allowed)).fetchall()]
+    return selected, sorted(set(conflicts)), sorted(unknown_codes)
+
 def history_count(conn, symbol, cutoff):
-    return conn.execute(
-        """SELECT COUNT(DISTINCT trade_date) FROM ohlcv
-           WHERE symbol=? AND market_code='REG' AND trade_date<=?
-             AND open>0 AND high>=open AND low<=open
-             AND close>0 AND high>=close AND low<=close AND volume>=0""",
-        (symbol, cutoff)
-    ).fetchone()[0]
+    rows, _, _ = selected_rows(conn, symbol, cutoff, limit=100000)
+    return len(rows)
 
 def screen(conn, symbol, min_sessions=MIN_SESSIONS, cutoff_date=None):
     cutoff_date = cutoff_date or expected_weekday().isoformat()
-    rows = conn.execute(
-        """SELECT trade_date, close, volume FROM ohlcv
-           WHERE symbol=? AND market_code='REG' AND trade_date<=?
-             AND open>0 AND high>=open AND low<=open
-             AND close>0 AND high>=close AND low<=close AND volume>=0
-           ORDER BY trade_date DESC LIMIT 120""",
-        (symbol, cutoff_date)
-    ).fetchall()
-    rows.reverse()
+    rows, conflicts, unknown_codes = selected_rows(conn, symbol, cutoff_date)
+    if conflicts:
+        return None, 'MARKET_CODE_CONFLICT'
     if len(rows) < min_sessions:
         return None, 'DATA_PENDING'
-    dates = [r[0] for r in rows]
+    dates = [r['date'] for r in rows]
     if len(set(dates)) != len(dates):
         return None, 'DUPLICATE_DATES'
     lag = weekday_lag(dates[-1], cutoff_date)
     if lag is None or lag > MAX_CANDIDATE_WEEKDAY_LAG:
         return None, 'STALE_CANDIDATE'
-    closes = [float(r[1]) for r in rows]
-    volumes = [int(r[2]) for r in rows]
+    closes = [float(r['close']) for r in rows]
+    volumes = [int(r['volume']) for r in rows]
     avg20 = sum(volumes[-20:]) / 20
     if avg20 <= 0:
         return None, 'ZERO_AVERAGE_VOLUME'
@@ -80,7 +108,10 @@ def screen(conn, symbol, min_sessions=MIN_SESSIONS, cutoff_date=None):
         'relative_volume': round(relvol, 3),
         'change_20_sessions_pct': round(change20, 3),
         'rank_score': score, 'decision': 'WATCH_RESEARCH_ONLY',
-        'data_source': 'psxdata REG OHLCV; per-row provenance in SQLite',
+        'data_source': 'Explicitly mapped market codes; per-row provenance in SQLite',
+        'latest_market_code': rows[-1]['market_code'],
+        'latest_source_file': rows[-1]['source_file'],
+        'unmapped_market_codes_seen': unknown_codes,
         'independent_official_verification': False,
         'completed_session_cutoff': cutoff_date,
         'weekday_lag': lag, 'freshness': 'FRESH',
@@ -125,7 +156,7 @@ def collect_discovery(conn, symbols, cutoff, fetcher=None):
 
 def make_report(conn, symbols, cutoff, collect=False, fetcher=None):
     result = {
-        'schema_version': '1.2',
+        'schema_version': '1.3',
         'generated_at_utc': datetime.now(timezone.utc).isoformat(),
         'completed_session_cutoff': cutoff,
         'universe_type': 'curated_subset_not_full_psx',
@@ -142,12 +173,13 @@ def make_report(conn, symbols, cutoff, collect=False, fetcher=None):
     for symbol in symbols:
         candidate, reason = screen(conn, symbol, cutoff_date=cutoff)
         count = history_count(conn, symbol, cutoff)
-        latest_row = conn.execute(
-            "SELECT MAX(trade_date) FROM ohlcv WHERE symbol=? AND market_code='REG' AND trade_date<=?",
-            (symbol, cutoff)).fetchone()
-        latest = latest_row[0] if latest_row else None
+        selected, conflicts, unknown_codes = selected_rows(conn, symbol, cutoff)
+        latest = selected[-1]['date'] if selected else None
         lag = weekday_lag(latest, cutoff) if latest else None
         result['coverage'][symbol] = {'completed_sessions': count,
+                                     'mapped_market_codes': list(MARKET_CODES.get(symbol, ('REG',))),
+                                     'unmapped_market_codes_seen': unknown_codes,
+                                     'overlap_conflict_dates': conflicts[:20],
                                      'latest_completed_observation': latest,
                                      'weekday_lag': lag,
                                      'status': 'READY' if candidate else reason}
@@ -164,6 +196,7 @@ def make_report(conn, symbols, cutoff, collect=False, fetcher=None):
         'screened': len(result['candidates']),
         'data_pending': sum(v == 'DATA_PENDING' for v in result['excluded'].values()),
         'stale': len(result['stale_watchlist']),
+        'market_code_conflicts': sum(v == 'MARKET_CODE_CONFLICT' for v in result['excluded'].values()),
         'fresh_candidates': len(result['candidates']),
         'excluded_other': sum(v not in ('DATA_PENDING', 'STALE_CANDIDATE') for v in result['excluded'].values()),
         'source_verified_candidates': 0,
