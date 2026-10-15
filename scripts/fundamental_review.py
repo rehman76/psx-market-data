@@ -35,7 +35,7 @@ def validate_entry(entry, symbols, cutoff):
     if entry['currency'] != 'PKR' or entry['units'] != 'PKR_absolute':
         raise ValueError('all figures must be in absolute PKR (not millions/thousands)')
     parsed=urlparse(entry['report_url'])
-    if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password:
+    if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError('report URL must be absolute HTTPS without credentials')
     if not isinstance(entry['report_sha256'],str) or len(entry['report_sha256'])!=64 or any(x not in '0123456789abcdef' for x in entry['report_sha256'].lower()):
         raise ValueError('valid SHA-256 of source document required')
