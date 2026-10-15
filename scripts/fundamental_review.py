@@ -19,6 +19,13 @@ FIELDS = {
     'revenue', 'operating_cash_flow', 'shares_outstanding',
     'dividend_per_share', 'eps_reported'
 }
+# Banks use interest and fee income, credit exposures, and regulatory capital.
+# Generic industrial net margin and operating-cash-flow rules should not be
+# interpreted as a bank valuation or quality screen.
+BANKS = frozenset({'MCB','UBL','HBL','BAFL','MEBL'})
+def sector_class(symbol):
+    return 'BANK' if symbol in BANKS else 'NON_BANK_UNCLASSIFIED'
+
 NUMERIC = ('net_income','equity','total_assets','total_liabilities','revenue',
            'operating_cash_flow','shares_outstanding','dividend_per_share','eps_reported')
 
@@ -78,19 +85,28 @@ def build(symbols, cutoff, disclosures=None):
     for symbol in symbols:
         item=by_symbol.get(symbol)
         if item is None:
-            reviews.append({'symbol':symbol,'status':'DISCLOSURE_MISSING',
+            reviews.append({'symbol':symbol,'sector_class':sector_class(symbol),'sector_specific_assessment':'NOT_PERFORMED',
+              'status':'DISCLOSURE_MISSING',
               'blocking_reasons':['FUNDAMENTAL_DISCLOSURE_MISSING','DOCUMENT_AUTHENTICATION_PENDING'],
               'fundamentals_verified':False,'trade_eligible':False,'metrics':{}})
             continue
         d,checks=item
+        classification=sector_class(symbol)
+        if classification == 'BANK':
+            checks['net_margin_pct']=None
+            checks['operating_cash_flow_to_net_income']=None
+            checks['industrial_ratio_omission_reason']='Bank financial statements require bank-specific definitions and disclosures'
         stale=(date.fromisoformat(cutoff)-date.fromisoformat(d['fiscal_period_end'])).days>240
         issues=[]
         if stale: issues.append('FINANCIAL_REPORT_STALE')
         if not checks['balance_sheet_roughly_reconciles']: issues.append('BALANCE_SHEET_RECONCILIATION_REVIEW')
         if not checks['eps_roughly_reconciles']: issues.append('EPS_RECONCILIATION_REVIEW')
         issues.append('DOCUMENT_AUTHENTICATION_PENDING')
+        issues.append('SECTOR_SPECIFIC_VALIDATION_PENDING')
         reviews.append({'symbol':symbol,
-           'status':'NEEDS_REVIEW' if stale or len(issues)>1 else 'DOCUMENT_UNATTESTED',
+           'sector_class':classification,
+           'sector_specific_assessment':'NOT_PERFORMED',
+           'status':'NEEDS_REVIEW' if stale or any(i.endswith('_REVIEW') for i in issues) else 'DOCUMENT_UNATTESTED',
            'fiscal_period_end':d['fiscal_period_end'],
            'published_on':d['published_on'],
            'report_url':d['report_url'],
@@ -98,7 +114,7 @@ def build(symbols, cutoff, disclosures=None):
            'blocking_reasons':issues,
            'fundamentals_verified':False, 'trade_eligible':False,
            'metrics':checks})
-    return {'schema_version':'1.0',
+    return {'schema_version':'1.1',
        'generated_at_utc':datetime.now(timezone.utc).isoformat(),
        'completed_session_cutoff':cutoff,
        'provenance':'user_submitted_unattested_filing_figures',
