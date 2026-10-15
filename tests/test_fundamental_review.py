@@ -33,9 +33,15 @@ class FundamentalDisclosureReviewTests(unittest.TestCase):
         r=result['reviews'][0]
         self.assertEqual(r['status'],'DOCUMENT_UNATTESTED')
         self.assertEqual(r['metrics']['eps_recomputed_pkr'],10)
-        self.assertEqual(r['metrics']['net_margin_pct'],20)
+        self.assertIsNone(r['metrics']['net_margin_pct'])
+        self.assertEqual(r['sector_class'],'BANK')
+        self.assertIn('SECTOR_SPECIFIC_VALIDATION_PENDING',r['blocking_reasons'])
         self.assertIn('DOCUMENT_AUTHENTICATION_PENDING',r['blocking_reasons'])
         self.assertFalse(r['trade_eligible'])
+    def test_nonbank_margin_is_still_computed(self):
+        r=build(['IMAGE'],'2026-10-14',[self.filing(symbol='IMAGE')])['reviews'][0]
+        self.assertEqual(r['metrics']['net_margin_pct'],20)
+        self.assertEqual(r['sector_class'],'NON_BANK_UNCLASSIFIED')
     def test_stale_disclosure_is_flagged(self):
         r=build(['MCB'],'2026-10-14',[self.filing(fiscal_period_end='2025-12-31',published_on='2026-03-15')])['reviews'][0]
         self.assertEqual(r['status'],'NEEDS_REVIEW')
