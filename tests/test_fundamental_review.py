@@ -61,6 +61,13 @@ class FundamentalDisclosureReviewTests(unittest.TestCase):
             build(['MCB'],'2026-10-14',[self.filing(net_income=True)])
         with self.assertRaises(ValueError):
             build(['MCB'],'2026-10-14',[self.filing(report_url='https://dps.psx.com.pk/company/MCB?secret=token')])
+    def test_bank_suppresses_inappropriate_industrial_ratios(self):
+        r=build(['MCB'],'2026-10-14',[self.filing()])['reviews'][0]
+        self.assertEqual(r['sector_class'],'BANK')
+        self.assertIsNone(r['metrics']['net_margin_pct'])
+        self.assertIsNone(r['metrics']['operating_cash_flow_to_net_income'])
+        self.assertIn('SECTOR_SPECIFIC_VALIDATION_PENDING',r['blocking_reasons'])
+        self.assertFalse(r['trade_eligible'])
     def test_nonpositive_equity_yields_no_roe(self):
         r=build(['MCB'],'2026-10-14',[self.filing(equity=-1)])['reviews'][0]
         self.assertIsNone(r['metrics']['return_on_equity_pct'])
