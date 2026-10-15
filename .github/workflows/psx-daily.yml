@@ -256,7 +256,7 @@ jobs:
       - name: Generate financial document integrity report
         id: document_integrity
         continue-on-error: true
-        if: steps.document_integrity_tests.outcome == 'success'
+        if: steps.document_integrity_tests.outcome == 'success' && steps.fundamentals.outcome == 'success' && steps.fundamentals_artifact.outcome == 'success'
         run: |
           # No local issuer reports provided by default; declare this explicitly.
           python scripts/financial_document_integrity.py \
@@ -266,6 +266,7 @@ jobs:
       - name: Verify financial document integrity report
         id: document_integrity_artifact
         continue-on-error: true
+        if: steps.document_integrity.outcome == 'success'
         run: |
           test -s publish/financial_document_integrity.json
           python - <<'PY'
