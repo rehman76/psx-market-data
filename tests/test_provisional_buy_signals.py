@@ -20,7 +20,7 @@ class TestProvisionalBuySignals(unittest.TestCase):
     def test_provisional_signal_remains_unapproved(self):
         x=build(agenda())
         self.assertEqual(x['summary']['provisional_buy_candidates'],1)
-        self.assertEqual(x['summary']['early_buy_watch'],0)
+        self.assertEqual(x['summary']['early_buy_watch'],1) # BBB passes exactly three of four
         self.assertEqual(x['signals'][0]['screening_passed'],4)
         r=x['signals'][0]
         self.assertEqual(r['signal'],'PROVISIONAL_BUY_CANDIDATE')
@@ -58,8 +58,21 @@ class TestProvisionalBuySignals(unittest.TestCase):
 
     def test_wait_and_missing_data(self):
         x=build(agenda())
-        self.assertEqual(x['signals'][1]['signal'],'WAIT_FOR_TECHNICAL_CONFIRMATION')
+        self.assertEqual(x['signals'][1]['signal'],'EARLY_BUY_WATCH')
+        self.assertEqual(x['signals'][1]['screening_passed'],3)
         self.assertEqual(x['signals'][2]['signal'],'INSUFFICIENT_DATA')
+
+    def test_two_checks_pass_is_wait(self):
+        a=agenda()
+        # BBB fails RSI already; also make MA20 below MA50.
+        a['stocks'][1]['technical']['sma50']=105.0
+        result=build(a)
+        row=result['signals'][1]
+        self.assertEqual(row['signal'],'WAIT_FOR_TECHNICAL_CONFIRMATION')
+        self.assertEqual(row['screening_passed'],2)
+        self.assertEqual(result['summary']['technical_wait'],1)
+        self.assertEqual(row['approved_shares'],0)
+        self.assertFalse(row['trade_eligible'])
 
     def test_stale_date_never_emits_buy(self):
         a=agenda()
